@@ -1,0 +1,42 @@
+{
+  "architecture": "aarch64",
+  "minimum_android_api": 24,
+  "series": [
+    {
+      "minor": "3.9",
+      "recipe_ref": "04771833e7384de4e33d3279714a29c242db68a0",
+      "recipe_baseline": "3.9.7",
+      "support": "legacy-eol"
+    },
+    {
+      "minor": "3.10",
+      "recipe_ref": "f1c878c5731537b287ac6b4c53b7b6a05df486dd",
+      "recipe_baseline": "3.10.8",
+      "support": "security"
+    },
+    {
+      "minor": "3.11",
+      "recipe_ref": "2cb1f4277481e4c6a74d39f057580c82adadf372",
+      "recipe_baseline": "3.11.10",
+      "support": "security"
+    },
+    {
+      "minor": "3.12",
+      "recipe_ref": "860d189e7280b1bc49a30c62a08d80509250193d",
+      "recipe_baseline": "3.12.12",
+      "support": "security"
+    },
+    {
+      "minor": "3.13",
+      "recipe_ref": "9a7a2fa5ad3b134acd975f6b13d142d02737d782",
+      "recipe_baseline": "3.13.13",
+      "support": "bugfix"
+    },
+    {
+      "minor": "3.14",
+      "recipe_ref": "b4bbc294d9e6b934bcc901c4846a641589e9f586",
+      "recipe_baseline": "3.14.6",
+      "support": "bugfix"
+    }
+  ]
+}

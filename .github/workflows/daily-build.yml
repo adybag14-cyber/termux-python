@@ -1,0 +1,251 @@
+name: Daily Termux aarch64 builds
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      series:
+        description: "Comma-separated Python series (for example 3.13,3.14), or all"
+        required: false
+        default: "all"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: termux-python-daily-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve stable Python releases
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.versions.outputs.matrix }}
+      count: ${{ steps.versions.outputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: versions
+        name: Resolve Python.org versions and Termux recipes
+        env:
+          PYTHON_SERIES: ${{ github.event.inputs.series || 'all' }}
+        run: |
+          python3 scripts/resolve_versions.py \
+            --write resolved-versions.json \
+            --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: resolved-versions
+          path: resolved-versions.json
+          retention-days: 14
+
+  build-python:
+    name: CPython ${{ matrix.version }} / ${{ matrix.arch }}
+    needs: resolve
+    if: needs.resolve.outputs.count != '0'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable aarch64 containers through QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Clone current Termux build system
+        run: |
+          git clone --depth=1 https://github.com/termux/termux-packages.git termux-packages
+          if [[ "${{ matrix.recipe_ref }}" != "master" ]]; then
+            git -C termux-packages fetch --depth=1 origin "${{ matrix.recipe_ref }}"
+          fi
+
+      - name: Install the matching historical Python recipe
+        run: |
+          python3 scripts/prepare_python_recipe.py \
+            --tree termux-packages \
+            --minor "${{ matrix.minor }}" \
+            --version "${{ matrix.version }}" \
+            --recipe-ref "${{ matrix.recipe_ref }}" \
+            --metadata "python-${{ matrix.minor }}-metadata.json"
+
+      - name: Cross-compile native Termux package
+        working-directory: termux-packages
+        env:
+          TERMUX_PKG_API_LEVEL: ${{ matrix.api }}
+        run: |
+          ./scripts/run-docker.sh -d \
+            ./build-package.sh -I -C -a "${{ matrix.arch }}" python
+
+      - name: Collect Python and matching ensurepip packages
+        id: collect
+        run: |
+          mkdir -p dist
+          deb=$(find termux-packages/output -maxdepth 1 -type f \
+            -name 'python_*_aarch64.deb' -print -quit)
+          test -n "$deb"
+          cp "$deb" dist/
+
+          ensurepip_deb=$(find termux-packages/output -maxdepth 1 -type f \
+            -name 'python-ensurepip-wheels_*_all.deb' -print -quit || true)
+          if [[ -n "$ensurepip_deb" ]]; then
+            cp "$ensurepip_deb" dist/
+          fi
+
+          cp "python-${{ matrix.minor }}-metadata.json" dist/
+          echo "deb=$(basename "$deb")" >> "$GITHUB_OUTPUT"
+
+      - name: Run CPython and build psutil natively under emulated aarch64 Termux
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/work" \
+            termux/termux-docker:aarch64 \
+            /entrypoint.sh bash /work/scripts/build_psutil_wheel.sh \
+            "/work/dist/${{ steps.collect.outputs.deb }}" \
+            /work/dist
+
+      - name: Record checksums
+        run: |
+          (cd dist && sha256sum * | sort -k2 > "SHA256SUMS-${{ matrix.minor }}.build")
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: python-${{ matrix.minor }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  build-uv:
+    name: uv / aarch64
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable aarch64 containers through QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Clone Termux packages
+        run: git clone --depth=1 https://github.com/termux/termux-packages.git termux-packages
+
+      - name: Cross-compile uv
+        working-directory: termux-packages
+        run: |
+          ./scripts/run-docker.sh -d \
+            ./build-package.sh -I -C -a aarch64 uv
+
+      - name: Collect uv package
+        id: collect
+        run: |
+          mkdir -p dist
+          deb=$(find termux-packages/output -maxdepth 1 -type f \
+            -name 'uv_*_aarch64.deb' -print -quit)
+          test -n "$deb"
+          cp "$deb" dist/
+          echo "deb=$(basename "$deb")" >> "$GITHUB_OUTPUT"
+
+      - name: Test uv in aarch64 Termux
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/work" \
+            termux/termux-docker:aarch64 \
+            /entrypoint.sh bash -lc '
+              set -Eeuo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends "/work/dist/${{ steps.collect.outputs.deb }}"
+              uv --version
+              uvx --version
+            '
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: uv-aarch64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish immutable daily release
+    needs: [resolve, build-python, build-uv]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download successful Python artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: python-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download successful uv artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: uv-aarch64
+          path: dist
+          merge-multiple: true
+
+      - name: Select immutable release tag
+        id: release
+        run: |
+          build_date=$(date -u +%Y%m%d)
+          tag="termux-aarch64-${build_date}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "date=$build_date" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release indexes and checksums
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          test -d dist
+          test -n "$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.whl' \) -print -quit)"
+          rm -f dist/SHA256SUMS-*.build
+          python3 scripts/generate_release_index.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --assets dist \
+            --output dist
+
+      - name: Write release notes
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          {
+            echo "# Native Termux aarch64 build"
+            echo
+            echo "Immutable release tag: \`$RELEASE_TAG\`"
+            echo
+            echo "Built from Python.org sources with version-matched recipes from termux/termux-packages."
+            echo "Every install is SHA-256 verified by install.sh."
+            echo
+            echo "## Assets"
+            echo
+            awk -F '\t' 'NR > 1 { printf "- `%s` — %s %s (%s)\n", $5, $1, $3, $2 }' \
+              dist/release-index.tsv
+          } > release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          mapfile -t assets < <(find dist -maxdepth 1 -type f \
+            \( -name '*.deb' -o -name '*.whl' -o -name 'release-index.*' -o -name 'SHA256SUMS' \) \
+            -print | sort)
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Termux aarch64 daily build ${{ steps.release.outputs.date }}" \
+            --notes-file release-notes.md \
+            --latest

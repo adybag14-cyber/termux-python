@@ -1,0 +1,48 @@
+name: Validate repository
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compile Python scripts
+        run: python3 -m compileall -q scripts
+
+      - name: Check shell syntax
+        run: bash -n install.sh scripts/*.sh
+
+      - name: Validate JSON configuration
+        run: python3 -m json.tool config/series.json >/dev/null
+
+      - name: Resolve one live Python series
+        run: python3 scripts/resolve_versions.py --series 3.14 --write /tmp/resolved.json
+
+      - name: Exercise release index generation
+        run: |
+          mkdir -p /tmp/assets /tmp/index
+          : > /tmp/assets/python_3.14.6-1_aarch64.deb
+          : > /tmp/assets/python-ensurepip-wheels_3.14.6-1_all.deb
+          : > /tmp/assets/uv_0.11.29_aarch64.deb
+          : > /tmp/assets/psutil-7.2.2-cp314-cp314-linux_aarch64.whl
+          python3 scripts/generate_release_index.py \
+            --repo example/example \
+            --tag test-immutable-tag \
+            --assets /tmp/assets \
+            --output /tmp/index
+          grep -q $'python\t3.14' /tmp/index/release-index.tsv
+          grep -q $'ensurepip\t3.14' /tmp/index/release-index.tsv
+          grep -q $'psutil\t3.14' /tmp/index/release-index.tsv
+
+      - name: Parse workflow YAML
+        run: |
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f, aliases: true) }'
