@@ -35,6 +35,7 @@ jobs:
 
           sample = '''TERMUX_PKG_LICENSE="PythonPL"
           TERMUX_PKG_VERSION="3.9.7"
+          termux_step_pre_configure() { :; }
           termux_step_create_debscripts() { :; }
           '''
           Path("/tmp/generated-build.sh").write_text(

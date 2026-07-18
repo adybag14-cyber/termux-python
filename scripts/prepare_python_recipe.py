@@ -52,6 +52,28 @@ def extract_recipe(tree: Path, recipe_ref: str) -> None:
         shutil.copytree(source, destination)
 
 
+def prepare_current_build_system(tree: Path, minor: str) -> None:
+    """Make the current Termux host-Python helper usable with old recipes."""
+    helper = tree / "scripts" / "build" / "setup" / "termux_setup_build_python.sh"
+    helper_text = helper.read_text(encoding="utf-8")
+    loop = (
+        'for f in "$TERMUX_SCRIPTDIR"/packages/python/'
+        '0008-fix-ctypes-util-find_library.patch; do\n'
+    )
+    guarded_loop = loop + '\t\t\t\t[[ -f "$f" ]] || continue\n'
+    if guarded_loop not in helper_text:
+        if loop not in helper_text:
+            raise RuntimeError("Current Termux build-Python helper has an unknown layout")
+        helper_text = helper_text.replace(loop, guarded_loop, 1)
+        helper.write_text(helper_text, encoding="utf-8", newline="\n")
+
+    # Python 3.9.25 already contains a guarded <crypt.h> include. The old patch
+    # was required by 3.9.7 but now conflicts with the upstream implementation.
+    obsolete_patches = {"3.9": ("cryptmodule.c.patch",)}
+    for filename in obsolete_patches.get(minor, ()):
+        (tree / "packages" / "python" / filename).unlink(missing_ok=True)
+
+
 def replace_version(build_sh: str, version: str) -> str:
     updated, count = re.subn(
         r"^TERMUX_PKG_VERSION=.*$",
@@ -81,6 +103,17 @@ def replace_source_checksum(build_sh: str, checksum: str) -> str:
 
 def modernize_recipe(build_sh: str, minor: str) -> str:
     build_sh = build_sh.replace("TERMUX_MAKE_PROCESSES", "TERMUX_PKG_MAKE_PROCESSES")
+
+    if "termux_setup_build_python" not in build_sh:
+        marker = "termux_step_pre_configure() {\n"
+        if marker not in build_sh:
+            raise RuntimeError("Selected Python recipe has no pre-configure hook")
+        build_sh = build_sh.replace(
+            marker,
+            marker + "\ttermux_setup_build_python\n",
+            1,
+        )
+
     build_sh = build_sh.replace(
         'TERMUX_PKG_LICENSE="PythonPL"',
         'TERMUX_PKG_LICENSE="custom"\nTERMUX_PKG_LICENSE_FILE="LICENSE"',
@@ -143,6 +176,7 @@ def main() -> int:
         raise RuntimeError(f"{args.tree} is not a git checkout")
 
     extract_recipe(args.tree, args.recipe_ref)
+    prepare_current_build_system(args.tree, args.minor)
 
     source_url = f"https://www.python.org/ftp/python/{args.version}/Python-{args.version}.tar.xz"
     source = fetch_bytes(source_url)
