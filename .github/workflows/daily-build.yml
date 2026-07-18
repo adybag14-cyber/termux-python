@@ -102,19 +102,27 @@ jobs:
           echo "deb=$(basename "$deb")" >> "$GITHUB_OUTPUT"
 
       - name: Run CPython and build psutil natively under emulated aarch64 Termux
+        id: psutil
+        continue-on-error: true
         run: |
+          # termux/termux-docker runs as an Android app UID rather than root.
+          # Make only the artifact directory writable across that UID boundary.
+          chmod -R a+rwX dist
           docker run --rm --platform linux/arm64 \
             -v "$PWD:/work" \
             termux/termux-docker:aarch64 \
             /entrypoint.sh bash /work/scripts/build_psutil_wheel.sh \
             "/work/dist/${{ steps.collect.outputs.deb }}" \
-            /work/dist
+            /work/dist \
+            "${{ matrix.minor }}"
 
       - name: Record checksums
+        if: always()
         run: |
           (cd dist && sha256sum * | sort -k2 > "SHA256SUMS-${{ matrix.minor }}.build")
 
       - uses: actions/upload-artifact@v6
+        if: always()
         with:
           name: python-${{ matrix.minor }}
           path: dist/

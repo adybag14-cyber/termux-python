@@ -108,7 +108,7 @@ Existing release tags and assets are never replaced by the workflow. `release-in
 3. `scripts/prepare_python_recipe.py` updates that recipe to the newest patch release in the series and verifies the Python.org source hash.
 4. The current Termux package build system cross-compiles the package for Android API 24 and `aarch64`.
 5. The resulting package runs inside an emulated native aarch64 Termux container.
-6. That interpreter builds a `psutil` wheel from source and imports it in a clean virtual environment.
+6. That interpreter builds pinned `psutil` source, applies the small Android-to-Linux `/proc` backend compatibility patch, and imports the wheel in a clean virtual environment.
 7. The current upstream Termux `uv` recipe builds and tests `uv` and `uvx` separately.
 8. Successful outputs are published even when one legacy Python series fails, so an old ABI cannot block newer builds.
 

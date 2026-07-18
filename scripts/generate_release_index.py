@@ -20,6 +20,18 @@ def sha256(path: Path) -> str:
 
 
 def wheel_minor(filename: str) -> str | None:
+    # Project-built psutil wheels carry a numeric build tag identifying the
+    # Python series used for the native Termux smoke test. The extension uses
+    # psutil's stable cp36 ABI and is compatible with newer CPython releases.
+    match = re.fullmatch(
+        r"psutil-[^-]+-(3\d{1,2})-cp\d+-abi3-linux_aarch64\.whl",
+        filename,
+    )
+    if match:
+        digits = match.group(1)
+        return f"{digits[0]}.{digits[1:]}"
+
+    # Retain support for ordinary version-specific CPython wheels.
     match = re.search(r"-cp(3\d{1,2})-cp\1-", filename)
     if not match:
         return None
