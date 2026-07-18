@@ -183,7 +183,7 @@ jobs:
   publish:
     name: Publish immutable daily release
     needs: [resolve, build-python, build-uv]
-    if: always()
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
