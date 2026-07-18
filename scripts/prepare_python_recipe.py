@@ -114,6 +114,19 @@ def modernize_recipe(build_sh: str, minor: str) -> str:
             1,
         )
 
+    if tuple(map(int, minor.split("."))) <= (3, 12):
+        helper_call = "\ttermux_setup_build_python\n"
+        legacy_flags = (
+            "\t# Compatibility for setup.py-based legacy extension discovery.\n"
+            "\tCPPFLAGS+=\" -I$TERMUX_PREFIX/include\"\n"
+            "\tLDFLAGS=\"${LDFLAGS/-Wl,--as-needed/}\"\n"
+            "\tLDFLAGS+=\" -L$TERMUX_PREFIX/lib -lm\"\n"
+        )
+        if legacy_flags not in build_sh:
+            if helper_call not in build_sh:
+                raise RuntimeError("Legacy recipe has no build-Python helper call")
+            build_sh = build_sh.replace(helper_call, helper_call + legacy_flags, 1)
+
     build_sh = build_sh.replace(
         'TERMUX_PKG_LICENSE="PythonPL"',
         'TERMUX_PKG_LICENSE="custom"\nTERMUX_PKG_LICENSE_FILE="LICENSE"',

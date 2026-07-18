@@ -40,9 +40,10 @@ jobs:
           }
           termux_step_create_debscripts() { :; }
           '''
-          Path("/tmp/generated-build.sh").write_text(
-              modernize_recipe(sample, "3.9"), encoding="utf-8"
-          )
+          generated = modernize_recipe(sample, "3.9")
+          assert 'CPPFLAGS+=" -I$TERMUX_PREFIX/include"' in generated
+          assert 'LDFLAGS+=" -L$TERMUX_PREFIX/lib -lm"' in generated
+          Path("/tmp/generated-build.sh").write_text(generated, encoding="utf-8")
           PY
           bash -n /tmp/generated-build.sh
 
