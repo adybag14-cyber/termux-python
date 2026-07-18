@@ -48,7 +48,8 @@ fi
 python -m pip install --upgrade pip setuptools wheel packaging
 
 workdir=$(mktemp -d "$HOME/termux-psutil.XXXXXX")
-trap 'rm -rf "$workdir" /tmp/termux-python-psutil-test' EXIT
+test_venv="$HOME/termux-python-psutil-test"
+trap 'rm -rf "$workdir" "$test_venv"' EXIT
 archive="$workdir/psutil.tar.gz"
 source_dir="$workdir/psutil-release-${psutil_version}"
 wheelhouse="$workdir/wheelhouse"
@@ -89,10 +90,10 @@ published="$output_dir/psutil-${psutil_version}-${build_tag}-${rest}"
 cp "$wheel" "$published"
 chmod 0644 "$published"
 
-rm -rf /tmp/termux-python-psutil-test
-python -m venv /tmp/termux-python-psutil-test
-/tmp/termux-python-psutil-test/bin/python -m pip install --no-index "$published"
-/tmp/termux-python-psutil-test/bin/python - "$python_minor" <<'PY'
+rm -rf "$test_venv"
+python -m venv "$test_venv"
+"$test_venv/bin/python" -m pip install --no-index "$published"
+"$test_venv/bin/python" - "$python_minor" <<'PY'
 import json
 import platform
 import psutil
@@ -113,14 +114,15 @@ print(json.dumps({
 }, indent=2))
 PY
 
-/tmp/termux-python-psutil-test/bin/python - "$output_dir" <<'PY'
+build_info="$output_dir/build-info-${python_minor}.json"
+"$test_venv/bin/python" - "$build_info" <<'PY'
 import json
 import platform
 import psutil
 import sys
 from pathlib import Path
 
-output = Path(sys.argv[1]) / f"build-info-{sys.version_info.major}.{sys.version_info.minor}.json"
+output = Path(sys.argv[1])
 output.write_text(json.dumps({
     "python": sys.version,
     "python_minor": f"{sys.version_info.major}.{sys.version_info.minor}",
@@ -129,3 +131,7 @@ output.write_text(json.dumps({
     "machine": platform.machine(),
 }, indent=2) + "\n")
 PY
+
+test -s "$build_info"
+chmod 0644 "$build_info"
+ls -la "$output_dir"
