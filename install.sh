@@ -145,7 +145,12 @@ if [[ "$target" == "uv" ]]; then
   exit 0
 fi
 
-if [[ ! "$target" =~ ^3\.(9|10|11|12|13|14|15|16|17|18|19)$ ]]; then
+if [[ "$target" =~ ^3\.([0-9]+)$ ]]; then
+  target_minor=${BASH_REMATCH[1]}
+else
+  target_minor=0
+fi
+if ((10#$target_minor < 9)); then
   echo "Expected a Python minor version such as 3.10 or 3.14, or 'uv'." >&2
   exit 2
 fi
