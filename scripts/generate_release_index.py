@@ -24,7 +24,7 @@ def wheel_minor(filename: str) -> str | None:
     # Python series used for the native Termux smoke test. The extension uses
     # psutil's stable cp36 ABI and is compatible with newer CPython releases.
     match = re.fullmatch(
-        r"psutil-[^-]+-(3\d{1,2})-cp\d+-abi3-linux_aarch64\.whl",
+        r"psutil-[^-]+-(3\d{1,2})-cp\d+-abi3-(?:linux_aarch64|android_\d+_arm64_v8a)\.whl",
         filename,
     )
     if match:
