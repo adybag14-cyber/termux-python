@@ -109,17 +109,17 @@ TERMUX_PKG_DESCRIPTION="CPython {minor} for Termux/Android aarch64"
 # Newer recipes move Lib/ensurepip/_bundled into python-ensurepip-wheels; apt
 # unpacks that matching release asset before it runs this postinst.
 termux_step_create_debscripts() {{
-    cat <<- POSTINST_EOF > ./postinst
-    #!$TERMUX_PREFIX/bin/sh
+    cat > ./postinst <<POSTINST_EOF
+#!$TERMUX_PREFIX/bin/sh
 
-    rm -Rf $TERMUX_PREFIX/lib/python{minor}/site-packages/pip-*.dist-info
-    if ! $TERMUX_PREFIX/bin/python{minor} -m ensurepip --upgrade --default-pip; then
-        echo "WARNING: pip bootstrap failed for Python {minor}." >&2
-        echo "Install the matching python-ensurepip-wheels asset, then run:" >&2
-        echo "  python{minor} -m ensurepip --upgrade --default-pip" >&2
-    fi
-    exit 0
-    POSTINST_EOF
+rm -Rf $TERMUX_PREFIX/lib/python{minor}/site-packages/pip-*.dist-info
+if ! $TERMUX_PREFIX/bin/python{minor} -m ensurepip --upgrade --default-pip; then
+    echo "WARNING: pip bootstrap failed for Python {minor}." >&2
+    echo "Install the matching python-ensurepip-wheels asset, then run:" >&2
+    echo "  python{minor} -m ensurepip --upgrade --default-pip" >&2
+fi
+exit 0
+POSTINST_EOF
     chmod 0755 ./postinst
 }}
 # ---------------------------------------------------------------------------
