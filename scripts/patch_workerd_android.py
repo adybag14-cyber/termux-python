@@ -135,6 +135,24 @@ selects.config_setting_group(
             '        ":arm64_linux": ["ARMV8_OS_LINUX"],\n        ":arm64_android": ["ARMV8_OS_LINUX"],\n',
         )
 
+    rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
+    rust_text = rust_module.read_text(encoding="utf-8")
+    if '    "aarch64-linux-android",\n' not in rust_text:
+        replace_once(
+            rust_module,
+            '    "aarch64-unknown-linux-gnu",\n',
+            '    "aarch64-unknown-linux-gnu",\n    "aarch64-linux-android",\n',
+        )
+
+    rust_text = rust_module.read_text(encoding="utf-8")
+    if '        "aarch64-linux-android": ["-Ctarget-feature=+crc"],\n' not in rust_text:
+        replace_once(
+            rust_module,
+            '        "aarch64-unknown-linux-gnu": ["-Ctarget-feature=+crc"],\n',
+            '        "aarch64-unknown-linux-gnu": ["-Ctarget-feature=+crc"],\n'
+            '        "aarch64-linux-android": ["-Ctarget-feature=+crc"],\n',
+        )
+
     bazelrc = tree / ".bazelrc"
     bazelrc_text = bazelrc.read_text(encoding="utf-8")
     if "build:android --config=unix" not in bazelrc_text:
