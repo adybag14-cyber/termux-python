@@ -67,3 +67,72 @@ jobs:
       - name: Parse workflow YAML
         run: |
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f, aliases: true) }'
+
+  probe-workerd-android:
+    if: github.ref == 'refs/heads/wrangler-android-ci'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve Wrangler native versions
+        id: versions
+        run: |
+          set -Eeuo pipefail
+          wrangler=$(curl -fsSL https://registry.npmjs.org/wrangler/latest | jq -r .version)
+          test -n "$wrangler" -a "$wrangler" != null
+          git clone --filter=blob:none --depth=1 --branch "wrangler@$wrangler" \
+            https://github.com/cloudflare/workers-sdk.git workers-sdk
+          workerd=$(sed -n 's/^  workerd: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
+          esbuild=$(sed -n 's/^  esbuild: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
+          test -n "$workerd" -a -n "$esbuild"
+          printf 'wrangler=%s\nworkerd=%s\nesbuild=%s\n' "$wrangler" "$workerd" "$esbuild"
+          echo "wrangler=$wrangler" >> "$GITHUB_OUTPUT"
+          echo "workerd=$workerd" >> "$GITHUB_OUTPUT"
+          echo "esbuild=$esbuild" >> "$GITHUB_OUTPUT"
+
+      - name: Clone and patch exact workerd source
+        run: |
+          set -Eeuo pipefail
+          git clone --filter=blob:none --depth=1 --branch "v${{ steps.versions.outputs.workerd }}" \
+            https://github.com/cloudflare/workerd.git workerd
+          python3 scripts/patch_workerd_android.py workerd
+
+      - name: Select Android NDK and Bazelisk
+        run: |
+          set -Eeuo pipefail
+          test -d "$ANDROID_NDK_LATEST_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build workerd from source for Android aarch64
+        working-directory: workerd
+        run: |
+          set -Eeuo pipefail
+          "$HOME/.local/bin/bazelisk" version
+          "$HOME/.local/bin/bazelisk" build //src/workerd/server:workerd \
+            --config=release_android \
+            --platforms=//:android_arm64 \
+            --jobs=4 \
+            --verbose_failures
+
+      - name: Verify target binary
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          cp workerd/bazel-bin/src/workerd/server/workerd dist/workerd-android-aarch64
+          file dist/workerd-android-aarch64
+          readelf -h dist/workerd-android-aarch64
+          if readelf -d dist/workerd-android-aarch64 | grep -F 'libc.so.6'; then
+            echo 'glibc dependency detected; refusing non-Android artifact' >&2
+            exit 1
+          fi
+          sha256sum dist/workerd-android-aarch64
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: workerd-android-aarch64
+          path: dist/workerd-android-aarch64
+          if-no-files-found: error
+          retention-days: 3
