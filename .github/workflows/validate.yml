@@ -112,6 +112,7 @@ jobs:
           set -Eeuo pipefail
           "$HOME/.local/bin/bazelisk" version
           "$HOME/.local/bin/bazelisk" build //src/workerd/server:workerd \
+            --enable_platform_specific_config=false \
             --config=release_android \
             --platforms=//:android_arm64 \
             --jobs=4 \
