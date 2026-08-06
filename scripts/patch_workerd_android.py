@@ -144,6 +144,7 @@ selects.config_setting_group(
 # Community native Android configuration used by termux-python.
 # Keep host tools native to the Linux CI runner while target C/C++ uses the NDK.
 build:android --config=unix
+build:release_android --config=android
 build:release_android --config=release_unix
 build:release_android --@workerd//src/workerd/server:use_tcmalloc=False
 build:release_android --@workerd//src/workerd/util:use_perfetto=False
