@@ -297,6 +297,8 @@ selects.config_setting_group(
 # Keep host tools native to the Linux CI runner while target C/C++ uses the NDK.
 build:android --config=unix
 build:android --@capnp-cpp//src/kj:libdl=False
+# Host-side V8 generators must emit ARM64 code/snapshots for the Android target.
+build:android --@v8//bazel/config:v8_target_cpu=arm64
 build:release_android --config=android
 build:release_android --config=release_unix
 build:release_android --@workerd//src/workerd/server:use_tcmalloc=False
