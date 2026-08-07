@@ -178,6 +178,48 @@ selects.config_setting_group(
             '    patches = ["//:patches/capnp/0001-android-bionic-port.patch"],\n',
         )
 
+    # V8's Android stack trace source uses an angle-bracket include for a V8
+    # project header. In the Bazel Android target that header is available as a
+    # project-relative include, not as a system include.
+    v8_patch_name = "0040-Fix-Android-stack-trace-project-include.patch"
+    v8_patch = tree / "patches" / "v8" / v8_patch_name
+    v8_patch.write_text(
+        "\n".join([
+            "diff --git a/src/base/debug/stack_trace_android.cc b/src/base/debug/stack_trace_android.cc",
+            "--- a/src/base/debug/stack_trace_android.cc",
+            "+++ b/src/base/debug/stack_trace_android.cc",
+            "@@ -15 +15 @@",
+            "-#include <src/base/platform/platform.h>",
+            "+#include \"src/base/platform/platform.h\"",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    v8_module = tree / "build" / "deps" / "v8.MODULE.bazel"
+    v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            '    "0039-Properly-depend-on-llvm-libc.patch",\n]',
+            '    "0039-Properly-depend-on-llvm-libc.patch",\n'
+            f'    "{v8_patch_name}",\n]',
+        )
+
+    v8_atomic_patch_name = "0041-Provide-atomic-ref-on-Android.patch"
+    v8_atomic_patch = tree / "patches" / "v8" / v8_atomic_patch_name
+    v8_atomic_patch.write_text(
+        'diff --git a/include/v8config.h b/include/v8config.h\n--- a/include/v8config.h\n+++ b/include/v8config.h\n@@ -21,7 +21,104 @@\n #include "v8-gn.h"  // NOLINT(build/include_directory)\n #endif\n \n+#include <atomic>\n #include <memory>\n+\n+// Android NDK libc++ does not currently provide C++20 std::atomic_ref. V8\n+// relies on atomic_ref for atomically accessing existing storage, so provide\n+// the subset of the interface V8 uses via Clang\'s __atomic builtins.\n+#if defined(__ANDROID__) && !defined(__cpp_lib_atomic_ref)\n+namespace std {\n+namespace __v8_android_atomic_ref_compat {\n+constexpr int ToBuiltinOrder(memory_order order) noexcept {\n+  switch (order) {\n+    case memory_order_relaxed: return __ATOMIC_RELAXED;\n+    case memory_order_consume: return __ATOMIC_CONSUME;\n+    case memory_order_acquire: return __ATOMIC_ACQUIRE;\n+    case memory_order_release: return __ATOMIC_RELEASE;\n+    case memory_order_acq_rel: return __ATOMIC_ACQ_REL;\n+    case memory_order_seq_cst: return __ATOMIC_SEQ_CST;\n+  }\n+  __builtin_unreachable();\n+}\n+constexpr memory_order FailureOrder(memory_order order) noexcept {\n+  if (order == memory_order_release) return memory_order_relaxed;\n+  if (order == memory_order_acq_rel) return memory_order_acquire;\n+  return order;\n+}\n+}  // namespace __v8_android_atomic_ref_compat\n+\n+template <typename T>\n+class atomic_ref {\n+ public:\n+  using value_type = T;\n+  static constexpr size_t required_alignment = alignof(T);\n+  static constexpr bool is_always_lock_free =\n+      __atomic_always_lock_free(sizeof(T), nullptr);\n+\n+  explicit atomic_ref(T& object) noexcept : ptr_(&object) {}\n+  atomic_ref(const atomic_ref&) noexcept = default;\n+\n+  T load(memory_order order = memory_order_seq_cst) const noexcept {\n+    T value;\n+    __atomic_load(ptr_, &value,\n+                  __v8_android_atomic_ref_compat::ToBuiltinOrder(order));\n+    return value;\n+  }\n+\n+  void store(T desired,\n+             memory_order order = memory_order_seq_cst) const noexcept {\n+    __atomic_store(ptr_, &desired,\n+                   __v8_android_atomic_ref_compat::ToBuiltinOrder(order));\n+  }\n+\n+  T exchange(T desired,\n+             memory_order order = memory_order_seq_cst) const noexcept {\n+    T old;\n+    __atomic_exchange(ptr_, &desired, &old,\n+                      __v8_android_atomic_ref_compat::ToBuiltinOrder(order));\n+    return old;\n+  }\n+\n+  bool compare_exchange_strong(T& expected, T desired, memory_order success,\n+                               memory_order failure) const noexcept {\n+    return __atomic_compare_exchange(\n+        ptr_, &expected, &desired, false,\n+        __v8_android_atomic_ref_compat::ToBuiltinOrder(success),\n+        __v8_android_atomic_ref_compat::ToBuiltinOrder(failure));\n+  }\n+\n+  bool compare_exchange_strong(\n+      T& expected, T desired,\n+      memory_order order = memory_order_seq_cst) const noexcept {\n+    return compare_exchange_strong(\n+        expected, desired, order,\n+        __v8_android_atomic_ref_compat::FailureOrder(order));\n+  }\n+\n+  template <typename U = T>\n+  enable_if_t<is_integral_v<U>, U> fetch_or(\n+      U arg, memory_order order = memory_order_seq_cst) const noexcept {\n+    return __atomic_fetch_or(\n+        ptr_, arg, __v8_android_atomic_ref_compat::ToBuiltinOrder(order));\n+  }\n+\n+  template <typename U = T>\n+  enable_if_t<is_integral_v<U>, U> fetch_add(\n+      U arg, memory_order order = memory_order_seq_cst) const noexcept {\n+    return __atomic_fetch_add(\n+        ptr_, arg, __v8_android_atomic_ref_compat::ToBuiltinOrder(order));\n+  }\n+\n+  bool is_lock_free() const noexcept {\n+    return __atomic_is_lock_free(sizeof(T), ptr_);\n+  }\n+\n+ private:\n+  T* ptr_;\n+};\n+}  // namespace std\n+#endif  // defined(__ANDROID__) && !defined(__cpp_lib_atomic_ref)\n // clang-format off\n \n // Platform headers for feature detection below.\n',
+        encoding="utf-8",
+    )
+
+    v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_atomic_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            f'    "{v8_patch_name}",\n]',
+            f'    "{v8_patch_name}",\n    "{v8_atomic_patch_name}",\n]',
+        )
+
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
