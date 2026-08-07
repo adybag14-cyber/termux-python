@@ -160,9 +160,8 @@ selects.config_setting_group(
             "diff --git a/src/kj/BUILD.bazel b/src/kj/BUILD.bazel",
             "--- a/src/kj/BUILD.bazel",
             "+++ b/src/kj/BUILD.bazel",
-            "@@ -84 +84 @@",
-            "-        \"//conditions:default\": [\"-lpthread\"],",
-            "+        \"//conditions:default\": [],",
+            "@@ -84,0 +85 @@",
+            "+        \"@platforms//os:android\": [],",
         ]) + "\n",
         encoding="utf-8",
     )
