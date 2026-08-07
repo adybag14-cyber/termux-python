@@ -220,6 +220,31 @@ selects.config_setting_group(
             f'    "{v8_patch_name}",\n    "{v8_atomic_patch_name}",\n]',
         )
 
+    # V8's Bazel helpers default generator tools to the target configuration.
+    # Its own comment notes cross-compilation must use exec so generators,
+    # Torque, and mksnapshot execute on the Linux build host rather than Android.
+    v8_exec_patch_name = "0042-Build-V8-generators-in-exec-configuration.patch"
+    v8_exec_patch = tree / "patches" / "v8" / v8_exec_patch_name
+    v8_exec_patch.write_text(
+        "\n".join([
+            "diff --git a/bazel/defs.bzl b/bazel/defs.bzl",
+            "--- a/bazel/defs.bzl",
+            "+++ b/bazel/defs.bzl",
+            "@@ -353 +353 @@ def get_cfg():",
+            "-    return \"target\"",
+            "+    return \"exec\"",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_exec_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            f'    "{v8_atomic_patch_name}",\n]',
+            f'    "{v8_atomic_patch_name}",\n    "{v8_exec_patch_name}",\n]',
+        )
+
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
