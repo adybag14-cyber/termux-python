@@ -135,6 +135,49 @@ selects.config_setting_group(
             '        ":arm64_linux": ["ARMV8_OS_LINUX"],\n        ":arm64_android": ["ARMV8_OS_LINUX"],\n',
         )
 
+    # Android defines __linux__, but Bionic has no separate libpthread and
+    # does not expose KJ's Linux memfd implementation through the same API.
+    capnp_patch_dir = tree / "patches" / "capnp"
+    capnp_patch_dir.mkdir(parents=True, exist_ok=True)
+    capnp_patch = capnp_patch_dir / "0001-android-bionic-port.patch"
+    capnp_patch.write_text(
+        "\n".join([
+            "diff --git a/src/kj/filesystem.c++ b/src/kj/filesystem.c++",
+            "--- a/src/kj/filesystem.c++",
+            "+++ b/src/kj/filesystem.c++",
+            "@@ -31 +31 @@",
+            "-#if __linux__",
+            "+#if __linux__ && !defined(__ANDROID__)",
+            "@@ -1839 +1839 @@",
+            "-#if __linux__",
+            "+#if __linux__ && !defined(__ANDROID__)",
+            "diff --git a/src/kj/filesystem.h b/src/kj/filesystem.h",
+            "--- a/src/kj/filesystem.h",
+            "+++ b/src/kj/filesystem.h",
+            "@@ -939 +939 @@",
+            "-#if __linux__",
+            "+#if __linux__ && !defined(__ANDROID__)",
+            "diff --git a/src/kj/BUILD.bazel b/src/kj/BUILD.bazel",
+            "--- a/src/kj/BUILD.bazel",
+            "+++ b/src/kj/BUILD.bazel",
+            "@@ -84 +84 @@",
+            "-        \"//conditions:default\": [\"-lpthread\"],",
+            "+        \"//conditions:default\": [],",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    deps_module = tree / "build" / "deps" / "gen" / "deps.MODULE.bazel"
+    deps_text = deps_module.read_text(encoding="utf-8")
+    if "patches/capnp/0001-android-bionic-port.patch" not in deps_text:
+        replace_once(
+            deps_module,
+            'http.archive(\n    name = "capnp-cpp",\n',
+            'http.archive(\n    name = "capnp-cpp",\n'
+            '    patch_args = ["-p1"],\n'
+            '    patches = ["//:patches/capnp/0001-android-bionic-port.patch"],\n',
+        )
+
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
@@ -162,6 +205,7 @@ selects.config_setting_group(
 # Community native Android configuration used by termux-python.
 # Keep host tools native to the Linux CI runner while target C/C++ uses the NDK.
 build:android --config=unix
+build:android --@capnp-cpp//src/kj:libdl=False
 build:release_android --config=android
 build:release_android --config=release_unix
 build:release_android --@workerd//src/workerd/server:use_tcmalloc=False
