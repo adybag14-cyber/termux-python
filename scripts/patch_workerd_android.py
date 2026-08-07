@@ -269,6 +269,43 @@ selects.config_setting_group(
             f'    "{v8_exec_patch_name}",\n]',
             f'    "{v8_exec_patch_name}",\n    "{v8_cxx23_patch_name}",\n]',
         )
+    # mksnapshot runs on the Linux host in a cross-build, so V8 cannot infer
+    # Android from the execution platform. Passing an empty target OS selects
+    # the generic embedded writer (including 64 KiB ARM64 alignment), while
+    # Android requires V8's Android writer behavior and 16 KiB alignment.
+    v8_android_snapshot_patch_name = "0044-Set-Android-mksnapshot-target-OS.patch"
+    v8_android_snapshot_patch = tree / "patches" / "v8" / v8_android_snapshot_patch_name
+    v8_android_snapshot_patch.write_text(
+        "\n".join([
+            "diff --git a/bazel/defs.bzl b/bazel/defs.bzl",
+            "--- a/bazel/defs.bzl",
+            "+++ b/bazel/defs.bzl",
+            "@@ -548,5 +548 @@ def v8_mksnapshot(name, args, suffix = \"\"):",
+            "-        target_os = select({",
+            "-            \"@v8//bazel/config:is_macos\": \"mac\",",
+            "-            \"@v8//bazel/config:is_windows\": \"win\",",
+            "-            \"//conditions:default\": \"\",",
+            "-        }),",
+            "+        target_os = \"android\",",
+            "@@ -557,5 +553 @@ def v8_mksnapshot(name, args, suffix = \"\"):",
+            "-        target_os = select({",
+            "-            \"@v8//bazel/config:is_macos\": \"mac\",",
+            "-            \"@v8//bazel/config:is_windows\": \"win\",",
+            "-            \"//conditions:default\": \"\",",
+            "-        }),",
+            "+        target_os = \"android\",",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_android_snapshot_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            f'    "{v8_cxx23_patch_name}",\n]',
+            f'    "{v8_cxx23_patch_name}",\n    "{v8_android_snapshot_patch_name}",\n]',
+        )
+
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
