@@ -306,6 +306,31 @@ selects.config_setting_group(
             f'    "{v8_cxx23_patch_name}",\n    "{v8_android_snapshot_patch_name}",\n]',
         )
 
+    # V8's full-width WASM shuffle reducer relies on a default template
+    # argument through an alias template. Clang rejects deduction for alias
+    # templates here, so spell out the already-intended 128-bit shuffle width.
+    v8_shuffle_patch_name = "0045-Explicit-SIMD-shuffle-array-size.patch"
+    v8_shuffle_patch = tree / "patches" / "v8" / v8_shuffle_patch_name
+    v8_shuffle_patch.write_text(
+        "\n".join([
+            "diff --git a/src/compiler/turboshaft/wasm-shuffle-reducer.cc b/src/compiler/turboshaft/wasm-shuffle-reducer.cc",
+            "--- a/src/compiler/turboshaft/wasm-shuffle-reducer.cc",
+            "+++ b/src/compiler/turboshaft/wasm-shuffle-reducer.cc",
+            "@@ -522 +522 @@",
+            "-    SimdShuffle::ShuffleArray shuffle_bytes;",
+            "+    SimdShuffle::ShuffleArray<kSimd128Size> shuffle_bytes;",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_shuffle_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            f'    "{v8_android_snapshot_patch_name}",\n]',
+            f'    "{v8_android_snapshot_patch_name}",\n    "{v8_shuffle_patch_name}",\n]',
+        )
+
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
