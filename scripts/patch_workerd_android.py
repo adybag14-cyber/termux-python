@@ -244,6 +244,31 @@ selects.config_setting_group(
             f'    "{v8_atomic_patch_name}",\n    "{v8_exec_patch_name}",\n]',
         )
 
+    # workerd builds V8 under C++23, but V8's Bazel defaults append C++20
+    # after the repository-wide flags. Once generator dependencies move to the
+    # exec configuration that trailing flag breaks V8 15's immediate-function
+    # regexp code on the Linux host. Keep Clang V8 builds on C++23 as intended.
+    v8_cxx23_patch_name = "0043-Use-CXX23-for-Clang-Bazel-builds.patch"
+    v8_cxx23_patch = tree / "patches" / "v8" / v8_cxx23_patch_name
+    v8_cxx23_patch.write_text(
+        "\n".join([
+            "diff --git a/bazel/defs.bzl b/bazel/defs.bzl",
+            "--- a/bazel/defs.bzl",
+            "+++ b/bazel/defs.bzl",
+            "@@ -152 +152 @@",
+            "-                \"-std=c++20\",",
+            "+                \"-std=c++23\",",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_cxx23_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            f'    "{v8_exec_patch_name}",\n]',
+            f'    "{v8_exec_patch_name}",\n    "{v8_cxx23_patch_name}",\n]',
+        )
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
