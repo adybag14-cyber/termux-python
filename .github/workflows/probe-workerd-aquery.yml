@@ -4,7 +4,7 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Clone and patch exact workerd
@@ -23,7 +23,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
           GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
           sudo install -m 0755 scripts/run_workerd_android_target_tool.sh /usr/local/bin/workerd-android-run-under
-      - name: Analyze full Android action graph
+      - name: Prove Android Rust final link uses NDK cc toolchain
         working-directory: workerd
         shell: bash
         run: |
@@ -33,13 +33,41 @@ jobs:
             --config=release_android
             --platforms=//:android_arm64
           )
-          "$HOME/.local/bin/bazelisk" aquery 'deps(//src/per_isolate:per_isolate@compile_cache)' "${common[@]}" --output=text > "$RUNNER_TEMP/compile-cache-aquery.txt"
-          grep -F '/usr/local/bin/workerd-android-run-under' "$RUNNER_TEMP/compile-cache-aquery.txt" | head -5 || true
-          grep -F 'gen-compile-cache' "$RUNNER_TEMP/compile-cache-aquery.txt" | head -10 || true
-          grep -F 'icu-data-file.embed.c' "$RUNNER_TEMP/compile-cache-aquery.txt" | head -10 || true
-          if grep -F '/usr/bin/clang ' "$RUNNER_TEMP/compile-cache-aquery.txt" | grep -F -- '--embed-dir=' >/dev/null; then
+
+          grep -A4 -F 'name = "rust_cc_common_link"' build/config/BUILD.bazel \
+            | grep -F 'constraint_values = ["@platforms//os:android"]'
+
+          builtins=$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -type f \
+            -name 'libclang_rt.builtins-aarch64-android.a' -print -quit)
+          test -n "$builtins"
+          test -f "$builtins"
+          echo "compiler_rt_builtins=$builtins"
+          llvm-nm --defined-only "$builtins" | grep -E '(^|[[:space:]])__clear_cache$'
+
+          "$HOME/.local/bin/bazelisk" aquery \
+            'deps(//src/rust/gen-compile-cache:gen-compile-cache)' \
+            "${common[@]}" --output=text > "$RUNNER_TEMP/gen-compile-cache-aquery.txt"
+
+          grep -F "Target: //src/rust/gen-compile-cache:gen-compile-cache" \
+            "$RUNNER_TEMP/gen-compile-cache-aquery.txt" | head -10
+          grep -F 'Mnemonic: CppLink' "$RUNNER_TEMP/gen-compile-cache-aquery.txt" | head -10
+          grep -F 'gen-compile-cache' "$RUNNER_TEMP/gen-compile-cache-aquery.txt" \
+            | grep -F 'CppLink' -C2 || true
+
+          if grep -F 'gen-compile-cache' "$RUNNER_TEMP/gen-compile-cache-aquery.txt" \
+              | grep -F -- '-nodefaultlibs' >/dev/null; then
+            echo 'gen-compile-cache still uses the Rust -nodefaultlibs final-link path' >&2
+            exit 1
+          fi
+
+          # Retain the target-tool transition proof used by the full build graph.
+          "$HOME/.local/bin/bazelisk" aquery \
+            'deps(//src/per_isolate:per_isolate@compile_cache)' \
+            "${common[@]}" --output=text > "$RUNNER_TEMP/compile-cache-aquery.txt"
+          grep -F '/usr/local/bin/workerd-android-run-under' "$RUNNER_TEMP/compile-cache-aquery.txt" >/dev/null
+          if grep -F '/usr/bin/clang ' "$RUNNER_TEMP/compile-cache-aquery.txt" \
+              | grep -F -- '--embed-dir=' >/dev/null; then
             echo 'ICU #embed leaked into stock host /usr/bin/clang' >&2
             exit 1
           fi
-          grep -F '/usr/local/bin/workerd-android-run-under' "$RUNNER_TEMP/compile-cache-aquery.txt" >/dev/null
-          echo android-action-graph-ok
+          echo android-rust-cc-common-link-analysis-ok
