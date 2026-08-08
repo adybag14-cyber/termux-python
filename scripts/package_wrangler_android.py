@@ -60,6 +60,13 @@ def normalize_wrangler_self_link(root: Path) -> None:
 
 TERMUX_RUNTIME_PREFIX = Path("/data/data/com.termux/files/usr")
 TERMUX_WRANGLER_HOME = TERMUX_RUNTIME_PREFIX / "lib" / "wrangler"
+FORBIDDEN_NATIVE_PACKAGE_PREFIXES = (
+    # The unscoped JS wrappers are portable; these scoped packages are the
+    # npm-distributed platform payloads that this project replaces from source.
+    "@cloudflare/workerd-",
+    "@esbuild/",
+    "@img/sharp-",
+)
 
 
 def deployment_root_variants(root: Path) -> set[str]:
@@ -150,6 +157,17 @@ def remove_foreign_native_payloads(root: Path) -> None:
             raise RuntimeError(f"Deployment contains an unexpected host ELF binary: {path}")
 
 
+def reject_platform_native_packages(root: Path) -> None:
+    """Reject npm-distributed native payload packages; native bits are source-built here."""
+    for path in root.rglob("package.json"):
+        try:
+            name = json.loads(path.read_text(encoding="utf-8")).get("name", "")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if any(name.startswith(prefix) for prefix in FORBIDDEN_NATIVE_PACKAGE_PREFIXES):
+            raise RuntimeError(f"Platform-native dependency leaked into Wrangler deployment: {name}")
+
+
 def verify_self_contained(root: Path) -> None:
     resolved_root = root.resolve()
     for path in root.rglob("*"):
@@ -199,22 +217,7 @@ def main() -> int:
     if not (deploy / "bin" / "wrangler.js").is_file():
         raise RuntimeError("Wrangler deployment is missing bin/wrangler.js")
 
-    forbidden_native = (
-        # Wrangler's deployment may contain the JS wrappers, but every native
-        # platform package is replaced by the exact source-built binary we
-        # bundle below. Reject every OS/architecture variant, not just the
-        # host platform seen by today's CI runner.
-        "@cloudflare/workerd-",
-        "@esbuild/",
-        "@img/sharp-",
-    )
-    for path in deploy.rglob("package.json"):
-        try:
-            name = json.loads(path.read_text(encoding="utf-8")).get("name", "")
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue
-        if any(name.startswith(prefix) for prefix in forbidden_native):
-            raise RuntimeError(f"Platform-native dependency leaked into Wrangler deployment: {name}")
+    reject_platform_native_packages(deploy)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / f"wrangler_{args.wrangler_version}_aarch64.deb"
