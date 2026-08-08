@@ -1,78 +1,179 @@
 name: Probe Wrangler Android workerd
 
 on:
-  push:
-    branches: [wrangler-android-ci]
   workflow_dispatch:
+    inputs:
+      native_run:
+        description: "Successful Probe workerd Android full run ID"
+        required: true
+        type: string
+      native_workerd_version:
+        description: "workerd version built by that run"
+        required: true
+        default: "1.20260801.1"
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  workerd-android:
+  smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 330
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
 
-      - name: Resolve Wrangler native versions
+      - name: Enable aarch64 containers through QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Resolve latest Wrangler pins
         id: versions
+        shell: bash
         run: |
           set -Eeuo pipefail
-          wrangler=$(curl -fsSL https://registry.npmjs.org/wrangler/latest | jq -r .version)
-          test -n "$wrangler" -a "$wrangler" != null
-          git clone --filter=blob:none --depth=1 --branch "wrangler@$wrangler" \
-            https://github.com/cloudflare/workers-sdk.git workers-sdk
+          wrangler=$(curl -fsSL --retry 4 --retry-all-errors https://registry.npmjs.org/wrangler/latest | jq -r .version)
+          git clone --filter=blob:none --depth=1 --branch "wrangler@$wrangler" https://github.com/cloudflare/workers-sdk.git workers-sdk
           workerd=$(sed -n 's/^  workerd: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
           esbuild=$(sed -n 's/^  esbuild: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
-          test -n "$workerd" -a -n "$esbuild"
-          printf 'wrangler=%s\nworkerd=%s\nesbuild=%s\n' "$wrangler" "$workerd" "$esbuild"
+          node=$(jq -r .volta.node workers-sdk/package.json)
+          pnpm=$(jq -r .packageManager workers-sdk/package.json | sed 's/^pnpm@//')
+          test "$workerd" = "${{ inputs.native_workerd_version }}" || {
+            echo "Latest Wrangler $wrangler now pins workerd $workerd, but native run ${{ inputs.native_run }} built ${{ inputs.native_workerd_version }}" >&2
+            exit 1
+          }
+          printf 'wrangler=%s\nworkerd=%s\nesbuild=%s\nnode=%s\npnpm=%s\n' "$wrangler" "$workerd" "$esbuild" "$node" "$pnpm"
           echo "wrangler=$wrangler" >> "$GITHUB_OUTPUT"
           echo "workerd=$workerd" >> "$GITHUB_OUTPUT"
           echo "esbuild=$esbuild" >> "$GITHUB_OUTPUT"
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$pnpm" >> "$GITHUB_OUTPUT"
 
-      - name: Clone and patch exact workerd source
+      - name: Download verified native workerd artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: workerd-android-aarch64
+          path: native-workerd
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.native_run }}
+
+      - name: Verify downloaded workerd ELF
+        shell: bash
         run: |
           set -Eeuo pipefail
-          git clone --filter=blob:none --depth=1 --branch "v${{ steps.versions.outputs.workerd }}" \
-            https://github.com/cloudflare/workerd.git workerd
-          python3 scripts/patch_workerd_android.py workerd
+          mkdir -p native
+          cp native-workerd/workerd-android-aarch64 native/workerd
+          chmod +x native/workerd
+          file native/workerd
+          readelf -h native/workerd | grep -E 'Machine:[[:space:]]+AArch64'
+          readelf -l native/workerd | grep -F '/system/bin/linker64'
+          ! readelf -d native/workerd | grep -F 'libc.so.6'
+          ! readelf -l native/workerd | grep -E 'ld-linux|ld-musl'
+          sha256sum native/workerd
 
-      - name: Select Android NDK and Bazelisk
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+
+      - name: Source-build Wrangler host esbuild graph and Android esbuild
+        env:
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
+          PNPM_VERSION: ${{ steps.versions.outputs.pnpm }}
+        shell: bash
         run: |
           set -Eeuo pipefail
-          test -d "$ANDROID_NDK_LATEST_HOME"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
-          GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          npm install --global "pnpm@$PNPM_VERSION"
+          cd workers-sdk
+          pnpm --filter='wrangler...' install --frozen-lockfile --ignore-scripts
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p host-tools
+          mapfile -t esbuild_versions < <(
+            find workers-sdk/node_modules/.pnpm -path '*/node_modules/esbuild/package.json' -type f -print0 |
+              xargs -0 -r -n1 jq -r .version | sort -Vu
+          )
+          ((${#esbuild_versions[@]} > 0))
+          printf 'esbuild graph: %s\n' "${esbuild_versions[*]}"
+          for version in "${esbuild_versions[@]}"; do
+            src="$RUNNER_TEMP/esbuild-src-$version"
+            git clone --filter=blob:none --depth=1 --branch "v$version" https://github.com/evanw/esbuild.git "$src"
+            binary="$RUNNER_TEMP/esbuild-$version"
+            (cd "$src" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$binary" ./cmd/esbuild)
+            test "$("$binary" --version)" = "$version"
+            mapfile -t targets < <(
+              find workers-sdk/node_modules/.pnpm \
+                -path "*/@esbuild+linux-x64@$version/node_modules/@esbuild/linux-x64/bin/esbuild" \
+                -type f
+            )
+            ((${#targets[@]} > 0))
+            for target in "${targets[@]}"; do
+              install -m 0755 "$binary" "$target"
+              test "$("$target" --version)" = "$version"
+            done
+            if [[ "$version" == "$ESBUILD_VERSION" ]]; then
+              cp "$binary" host-tools/esbuild
+              (cd "$src" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -o "$GITHUB_WORKSPACE/native/esbuild" ./cmd/esbuild)
+            fi
+          done
+          test "$(host-tools/esbuild --version)" = "$ESBUILD_VERSION"
+          file native/esbuild
+          readelf -h native/esbuild | grep -E 'Machine:[[:space:]]+AArch64'
+          readelf -l native/esbuild | grep -F '/system/bin/linker64'
 
-      - name: Build workerd from source for Android aarch64
-        working-directory: workerd
+      - name: Build and deploy Wrangler from source
+        env:
+          WRANGLER_SEND_METRICS: "false"
+          CI_OS: Linux
+          NODE_ENV: production
+        shell: bash
         run: |
           set -Eeuo pipefail
-          bazelisk version
-          bazelisk build //src/workerd/server:workerd \
-            --config=release_android \
-            --platforms=//:android_arm64 \
-            --jobs=4 \
-            --verbose_failures
+          cd workers-sdk
+          pnpm --filter='wrangler...' build
+          pnpm --filter=wrangler deploy "$GITHUB_WORKSPACE/wrangler-deploy" \
+            --prod --legacy --no-optional --ignore-scripts
 
-      - name: Verify target binary
+      - name: Assemble real Wrangler Termux package
+        env:
+          WRANGLER_VERSION: ${{ steps.versions.outputs.wrangler }}
+          WORKERD_VERSION: ${{ steps.versions.outputs.workerd }}
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
+        shell: bash
         run: |
           set -Eeuo pipefail
           mkdir -p dist
-          cp workerd/bazel-bin/src/workerd/server/workerd dist/workerd-android-aarch64
-          file dist/workerd-android-aarch64
-          readelf -h dist/workerd-android-aarch64
-          if readelf -d dist/workerd-android-aarch64 | grep -F 'libc.so.6'; then
-            echo 'glibc dependency detected; refusing non-Android artifact' >&2
-            exit 1
-          fi
-          sha256sum dist/workerd-android-aarch64
+          python3 scripts/package_wrangler_android.py \
+            --deploy wrangler-deploy \
+            --workerd-binary native/workerd \
+            --esbuild-binary native/esbuild \
+            --wrangler-version "$WRANGLER_VERSION" \
+            --workerd-version "$WORKERD_VERSION" \
+            --esbuild-version "$ESBUILD_VERSION" \
+            --output-dir dist
+          dpkg-deb -f "dist/wrangler_${WRANGLER_VERSION}_aarch64.deb" Package Version Architecture Depends
+
+      - name: Full Wrangler dev smoke in aarch64 Termux
+        env:
+          WRANGLER_VERSION: ${{ steps.versions.outputs.wrangler }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          chmod -R a+rX dist scripts
+          docker run --rm --platform linux/arm64 \
+            --security-opt seccomp=unconfined \
+            -v "$PWD:/work" \
+            termux/termux-docker:aarch64 \
+            /entrypoint.sh bash /work/scripts/test_wrangler_termux.sh \
+            "/work/dist/wrangler_${WRANGLER_VERSION}_aarch64.deb" \
+            "$WRANGLER_VERSION" \
+            "${{ steps.versions.outputs.workerd }}" \
+            "${{ steps.versions.outputs.esbuild }}"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: workerd-android-aarch64
-          path: dist/workerd-android-aarch64
+          name: wrangler-full-native-smoke
+          path: dist/wrangler_*_aarch64.deb
           if-no-files-found: error
           retention-days: 3
+          compression-level: 0
