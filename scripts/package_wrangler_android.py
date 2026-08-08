@@ -200,19 +200,13 @@ def main() -> int:
         raise RuntimeError("Wrangler deployment is missing bin/wrangler.js")
 
     forbidden_native = (
-        "@cloudflare/workerd-linux",
-        "@cloudflare/workerd-windows",
-        "@cloudflare/workerd-darwin",
-        "@esbuild/linux",
-        "@esbuild/win32",
-        "@esbuild/darwin",
-        "@img/sharp-linux",
-        "@img/sharp-win32",
-        "@img/sharp-darwin",
-        "@img/sharp-wasm",
-        "@img/sharp-libvips-linux",
-        "@img/sharp-libvips-darwin",
-        "@img/sharp-libvips-wasm",
+        # Wrangler's deployment may contain the JS wrappers, but every native
+        # platform package is replaced by the exact source-built binary we
+        # bundle below. Reject every OS/architecture variant, not just the
+        # host platform seen by today's CI runner.
+        "@cloudflare/workerd-",
+        "@esbuild/",
+        "@img/sharp-",
     )
     for path in deploy.rglob("package.json"):
         try:
@@ -220,7 +214,7 @@ def main() -> int:
         except (json.JSONDecodeError, UnicodeDecodeError):
             continue
         if any(name.startswith(prefix) for prefix in forbidden_native):
-            raise RuntimeError(f"Host-native dependency leaked into Wrangler deployment: {name}")
+            raise RuntimeError(f"Platform-native dependency leaked into Wrangler deployment: {name}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / f"wrangler_{args.wrangler_version}_aarch64.deb"
