@@ -42,7 +42,6 @@ jobs:
       - name: Build and deploy Wrangler from source
         env:
           PNPM_VERSION: ${{ steps.versions.outputs.pnpm }}
-          ESBUILD_BINARY_PATH: ${{ github.workspace }}/host-tools/esbuild
           NODE_ENV: production
           CI_OS: Linux
           WRANGLER_SEND_METRICS: "false"
@@ -51,8 +50,8 @@ jobs:
           set -Eeuo pipefail
           npm install --global "pnpm@$PNPM_VERSION"
           cd workers-sdk
-          pnpm --filter='wrangler...' install --frozen-lockfile
-          pnpm --filter='wrangler...' build
+          pnpm --filter='wrangler...' install --frozen-lockfile --ignore-scripts
+          ESBUILD_BINARY_PATH="$GITHUB_WORKSPACE/host-tools/esbuild" pnpm --filter='wrangler...' build
           pnpm --filter=wrangler deploy "$GITHUB_WORKSPACE/wrangler-deploy" --prod --legacy --no-optional --ignore-scripts
       - name: Package latest deployment structurally
         env:
