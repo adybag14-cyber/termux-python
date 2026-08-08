@@ -1,0 +1,97 @@
+name: Probe Clang 19 V8 consteval
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Reproduce V8 immediate-function pattern with stock Clang
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          /usr/bin/clang --version
+          /usr/bin/clang++ --version
+          cat > /tmp/v8-immediate.cc <<'CPP'
+          #include <cstdint>
+          #include <tuple>
+          #include <utility>
+
+          enum class Bytecode : uint8_t { kBreak, kPush };
+
+          template <Bytecode bc>
+          struct BytecodeOperands {
+            enum class Operand : uint8_t { kValue };
+            static consteval int Type(Operand op) { return static_cast<int>(op); }
+            static consteval auto GetOperandsTuple() {
+              return std::tuple(std::integral_constant<Operand, Operand::kValue>{});
+            }
+            template <typename Func>
+            static constexpr void ForEachOperand(Func&& f) {
+              constexpr auto ops = GetOperandsTuple();
+              std::apply([&](auto... op) { (..., f.template operator()<op.value>()); }, ops);
+            }
+          };
+
+          template <typename Func>
+          decltype(auto) DispatchOnBytecode(Bytecode bytecode, Func&& f) {
+            switch (bytecode) {
+              case Bytecode::kBreak: return f.template operator()<Bytecode::kBreak>();
+              case Bytecode::kPush: return f.template operator()<Bytecode::kPush>();
+            }
+            __builtin_unreachable();
+          }
+
+          int disassemble(Bytecode bytecode) {
+            int result = 0;
+            DispatchOnBytecode(bytecode, [&]<Bytecode bc>() {
+              BytecodeOperands<bc>::ForEachOperand([&]<auto op>() {
+                constexpr int type = BytecodeOperands<bc>::Type(op);
+                result += type + 1;
+              });
+            });
+            return result;
+          }
+
+          int main(int argc, char**) {
+            return disassemble(argc > 1 ? Bytecode::kPush : Bytecode::kBreak) == 1 ? 0 : 1;
+          }
+          CPP
+          set +e
+          /usr/bin/clang++ -std=c++23 -Wall -Wextra -Werror /tmp/v8-immediate.cc -o /tmp/v8-immediate-stock 2>/tmp/stock.err
+          stock_rc=$?
+          set -e
+          echo "stock_rc=$stock_rc"
+          cat /tmp/stock.err
+          if [[ $stock_rc -eq 0 ]]; then /tmp/v8-immediate-stock; fi
+          echo "stock_rc=$stock_rc" >> "$GITHUB_ENV"
+
+      - name: Install official workerd LLVM 19 toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          cd /tmp
+          wget -q https://apt.llvm.org/llvm.sh
+          sed -i '/apt-get install/d' llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang-19 lld-19 libunwind-19 libc++abi1-19 libc++1-19 \
+            libc++-19-dev libclang-rt-19-dev llvm-19
+          /usr/lib/llvm-19/bin/clang --version
+          /usr/lib/llvm-19/bin/clang++ --version
+
+      - name: Compile same pattern with Clang 19
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          /usr/lib/llvm-19/bin/clang++ -std=c++23 -Wall -Wextra -Werror \
+            /tmp/v8-immediate.cc -o /tmp/v8-immediate-19
+          /tmp/v8-immediate-19
+          echo "stock result: $stock_rc"
+          echo clang19-v8-immediate-ok
