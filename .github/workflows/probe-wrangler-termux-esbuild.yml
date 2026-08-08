@@ -1,0 +1,121 @@
+name: Probe latest Wrangler Termux esbuild
+on:
+  push:
+    branches: [probe-android-runner]
+  workflow_dispatch:
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Resolve latest Wrangler pins
+        id: versions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          wrangler=$(curl -fsSL https://registry.npmjs.org/wrangler/latest | jq -r .version)
+          git clone --filter=blob:none --depth=1 --branch "wrangler@$wrangler" https://github.com/cloudflare/workers-sdk.git workers-sdk
+          workerd=$(sed -n 's/^  workerd: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
+          esbuild=$(sed -n 's/^  esbuild: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
+          node=$(jq -r .volta.node workers-sdk/package.json)
+          pnpm=$(jq -r .packageManager workers-sdk/package.json | sed 's/^pnpm@//')
+          printf 'wrangler=%s\nworkerd=%s\nesbuild=%s\nnode=%s\npnpm=%s\n' "$wrangler" "$workerd" "$esbuild" "$node" "$pnpm"
+          echo "wrangler=$wrangler" >> "$GITHUB_OUTPUT"
+          echo "workerd=$workerd" >> "$GITHUB_OUTPUT"
+          echo "esbuild=$esbuild" >> "$GITHUB_OUTPUT"
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$pnpm" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+      - name: Source-build all host esbuild versions and Android esbuild
+        env:
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
+          PNPM_VERSION: ${{ steps.versions.outputs.pnpm }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm install --global "pnpm@$PNPM_VERSION"
+          cd workers-sdk
+          pnpm --filter='wrangler...' install --frozen-lockfile --ignore-scripts
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p host-tools native
+          mapfile -t esbuild_versions < <(
+            find workers-sdk/node_modules/.pnpm -path '*/node_modules/esbuild/package.json' -type f -print0 |
+              xargs -0 -r -n1 jq -r .version | sort -Vu
+          )
+          printf 'esbuild graph: %s\n' "${esbuild_versions[*]}"
+          for version in "${esbuild_versions[@]}"; do
+            src="$RUNNER_TEMP/esbuild-src-$version"
+            git clone --filter=blob:none --depth=1 --branch "v$version" https://github.com/evanw/esbuild.git "$src"
+            binary="$RUNNER_TEMP/esbuild-$version"
+            (cd "$src" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$binary" ./cmd/esbuild)
+            test "$("$binary" --version)" = "$version"
+            mapfile -t targets < <(find workers-sdk/node_modules/.pnpm               -path "*/@esbuild+linux-x64@$version/node_modules/@esbuild/linux-x64/bin/esbuild" -type f)
+            ((${#targets[@]} > 0))
+            for target in "${targets[@]}"; do install -m 0755 "$binary" "$target"; done
+            if [[ "$version" == "$ESBUILD_VERSION" ]]; then
+              cp "$binary" host-tools/esbuild
+              (cd "$src" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -o "$GITHUB_WORKSPACE/native/esbuild" ./cmd/esbuild)
+            fi
+          done
+          test "$(host-tools/esbuild --version)" = "$ESBUILD_VERSION"
+          file native/esbuild
+          readelf -l native/esbuild | grep -F '/system/bin/linker64'
+      - name: Build and deploy latest Wrangler from source
+        env:
+          WRANGLER_SEND_METRICS: "false"
+          CI_OS: Linux
+          NODE_ENV: production
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd workers-sdk
+          pnpm --filter='wrangler...' build
+          pnpm --filter=wrangler deploy "$GITHUB_WORKSPACE/wrangler-deploy" --prod --legacy --no-optional --ignore-scripts
+      - name: Package with Android esbuild
+        env:
+          WRANGLER_VERSION: ${{ steps.versions.outputs.wrangler }}
+          WORKERD_VERSION: ${{ steps.versions.outputs.workerd }}
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > native/workerd <<'SH'
+          #!/data/data/com.termux/files/usr/bin/sh
+          echo 'workerd 2026-08-01 placeholder'
+          SH
+          chmod +x native/workerd native/esbuild
+          mkdir -p dist
+          python3 scripts/package_wrangler_android.py             --deploy wrangler-deploy             --workerd-binary native/workerd             --esbuild-binary native/esbuild             --wrangler-version "$WRANGLER_VERSION"             --workerd-version "$WORKERD_VERSION"             --esbuild-version "$ESBUILD_VERSION"             --output-dir dist
+      - name: Install and exercise Wrangler/esbuild in aarch64 Termux
+        env:
+          WRANGLER_VERSION: ${{ steps.versions.outputs.wrangler }}
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          chmod -R a+rX dist scripts
+          docker run --rm --platform linux/arm64             -v "$PWD:/work"             -e EXPECTED_WRANGLER="$WRANGLER_VERSION"             -e EXPECTED_ESBUILD="$ESBUILD_VERSION"             termux/termux-docker:aarch64             /entrypoint.sh bash -lc '
+              set -Eeuo pipefail
+              deb=/work/dist/wrangler_${EXPECTED_WRANGLER}_aarch64.deb
+              apt-get update
+              apt-get install -y --allow-downgrades --no-install-recommends curl "$deb"
+              test "$(node -p "process.platform + ":" + process.arch")" = android:arm64
+              wrangler --version | grep -F "$EXPECTED_WRANGLER"
+              test "$("$PREFIX/lib/wrangler/native/esbuild" --version)" = "$EXPECTED_ESBUILD"
+              rm -rf "$HOME/esbuild-smoke" && mkdir "$HOME/esbuild-smoke" && cd "$HOME/esbuild-smoke"
+              cat > index.js <<"JS"
+              export default { fetch() { return new Response("ok"); } };
+              JS
+              cat > wrangler.jsonc <<"JSON"
+              {"name":"termux-esbuild-smoke","main":"index.js","compatibility_date":"2026-08-01"}
+              JSON
+              CI=1 WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir "$HOME/esbuild-smoke/out"
+              test -n "$(find "$HOME/esbuild-smoke/out" -type f -print -quit)"
+              echo wrangler-termux-esbuild-ok
+            '
