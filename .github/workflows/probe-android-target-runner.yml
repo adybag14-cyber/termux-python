@@ -1,5 +1,7 @@
 name: Probe Android target runner
 on:
+  push:
+    branches: [probe-android-runner]
   workflow_dispatch:
 jobs:
   probe:
