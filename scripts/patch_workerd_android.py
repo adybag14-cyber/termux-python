@@ -355,31 +355,6 @@ selects.config_setting_group(
             f'    "{v8_shuffle_patch_name}",\n    "{v8_dead_context_patch_name}",\n]',
         )
 
-    # gen-compile-cache is a build-time executable. Native workerd intentionally
-    # builds it in target configuration to avoid a second V8 build, but an
-    # Android cross-build cannot execute the resulting aarch64 binary on the
-    # x86_64 CI host. Build only this private tool in exec configuration.
-    js_bundle = tree / "build" / "wd_js_bundle.bzl"
-    js_bundle_text = js_bundle.read_text(encoding="utf-8")
-    compile_cache_target = (
-        '        "_tool": attr.label(\n'
-        '            executable = True,\n'
-        '            allow_single_file = True,\n'
-        '            cfg = "target",\n'
-        '            default = "//src/rust/gen-compile-cache",\n'
-        '        ),\n'
-    )
-    compile_cache_exec = (
-        '        "_tool": attr.label(\n'
-        '            executable = True,\n'
-        '            allow_single_file = True,\n'
-        '            cfg = "exec",\n'
-        '            default = "//src/rust/gen-compile-cache",\n'
-        '        ),\n'
-    )
-    if compile_cache_exec not in js_bundle_text:
-        replace_once(js_bundle, compile_cache_target, compile_cache_exec)
-
     # Bionic's <endian.h> exposes htobe*/be*toh as macros/inlines rather than
     # linkable global functions. workerd's wrapper header deliberately declares
     # global functions, so provide Android definitions using compiler builtins.
@@ -456,6 +431,9 @@ uint64_t le64toh(uint64_t x) { return __builtin_bswap64(x); }
 # Keep host tools native to the Linux CI runner while target C/C++ uses the NDK.
 build:android --config=unix
 build:android --@capnp-cpp//src/kj:libdl=False
+# Build-time target executables (notably gen-compile-cache) stay in Android
+# target configuration and are executed through the CI-provided Termux runner.
+build:android --//build/config:target_run_under=/usr/local/bin/workerd-android-run-under
 # Host-side V8 generators must emit ARM64 code/snapshots for the Android target.
 build:android --@v8//bazel/config:v8_target_cpu=arm64
 build:release_android --config=android
