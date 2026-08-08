@@ -1,7 +1,5 @@
 name: Probe latest Wrangler source package
 on:
-  push:
-    branches: [probe-android-runner]
   workflow_dispatch:
 jobs:
   build:

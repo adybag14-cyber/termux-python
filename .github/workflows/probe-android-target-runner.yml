@@ -1,5 +1,7 @@
 name: Probe Android target runner
 on:
+  push:
+    branches: [probe-android-runner]
   workflow_dispatch:
 jobs:
   probe:
@@ -36,55 +38,17 @@ jobs:
           "$clang" hello.c -o hello
           file hello
           readelf -l hello | grep -E 'interpreter|Requesting'
-          printf 'hello.c generated.out\n' > manifest.txt
-      - name: Run Android executable through Termux container wrapper
+          mkdir -p "$RUNNER_TEMP/external-bazel-out"
+          ln -s "$RUNNER_TEMP/external-bazel-out" bazel-out
+          printf 'hello.c bazel-out/generated.out\n' > manifest.txt
+      - name: Run through staged-output Termux wrapper
         shell: bash
         run: |
           set -Eeuo pipefail
           docker pull --platform linux/arm64 termux/termux-docker:aarch64
-          cat > /usr/local/bin/workerd-android-run-under <<'SH'
-          #!/usr/bin/env bash
-          set -Eeuo pipefail
-          tool=$1
-          shift
-          here=$PWD
-          manifest=${1:-}
-          [[ -f "$manifest" ]] || { echo "expected compile-cache manifest as first argument: $manifest" >&2; exit 2; }
-          staged_tool=$(mktemp -p "$here" .android-runner-tool.XXXXXX)
-          staged_manifest=$(mktemp -p "$here" .android-runner-manifest.XXXXXX)
-          staged_inputs=()
-          outputs=()
-          cleanup() {
-            rm -f "$staged_tool" "$staged_manifest"
-            if ((${#staged_inputs[@]})); then rm -f "${staged_inputs[@]}"; fi
-          }
-          trap cleanup EXIT
-          cp -L "$tool" "$staged_tool"
-          chmod a+rx "$staged_tool"
-          index=0
-          while read -r input output; do
-            [[ -n "${input:-}" && -n "${output:-}" ]] || continue
-            staged_input="$here/.android-runner-input.$index"
-            cp -L "$input" "$staged_input"
-            chmod a+r "$staged_input"
-            staged_inputs+=("$staged_input")
-            outputs+=("$output")
-            mkdir -p "$(dirname "$output")"
-            : > "$output"
-            chmod a+rw "$output"
-            printf '%s %s\n' "$staged_input" "$output" >> "$staged_manifest"
-            index=$((index + 1))
-          done < "$manifest"
-          chmod a+r "$staged_manifest"
-          docker run --rm --platform linux/arm64 \
-            -v "$here:$here" -w "$here" \
-            termux/termux-docker:aarch64 \
-            "$staged_tool" "$staged_manifest"
-          for output in "${outputs[@]}"; do
-            [[ -e "$output" ]] || { echo "Android tool did not produce $output" >&2; exit 1; }
-          done
-          SH
-          chmod +x /usr/local/bin/workerd-android-run-under
+          sudo install -m 0755 scripts/run_workerd_android_target_tool.sh /usr/local/bin/workerd-android-run-under
           /usr/local/bin/workerd-android-run-under ./hello manifest.txt
-          test "$(stat -c %u generated.out)" = "$(id -u)"
-          grep -F 'android-runner-ok input=' generated.out
+          test "$(stat -c %u "$RUNNER_TEMP/external-bazel-out/generated.out")" = "$(id -u)"
+          grep -F 'android-runner-ok input=' "$RUNNER_TEMP/external-bazel-out/generated.out"
+          test ! -e .android-runner-output.0
+          echo staged-external-output-ok
