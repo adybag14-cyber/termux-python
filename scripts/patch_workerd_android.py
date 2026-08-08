@@ -331,6 +331,103 @@ selects.config_setting_group(
             f'    "{v8_android_snapshot_patch_name}",\n    "{v8_shuffle_patch_name}",\n]',
         )
 
+    # V8 declares native_context in CreateObjectLiteral but never consumes it.
+    # The cross-built host V8 library treats warnings as errors, so remove the
+    # dead declaration rather than suppressing unused-variable diagnostics.
+    v8_dead_context_patch_name = "0046-Remove-unused-object-literal-native-context.patch"
+    v8_dead_context_patch = tree / "patches" / "v8" / v8_dead_context_patch_name
+    v8_dead_context_patch.write_text(
+        "\n".join([
+            "diff --git a/src/runtime/runtime-literals.cc b/src/runtime/runtime-literals.cc",
+            "--- a/src/runtime/runtime-literals.cc",
+            "+++ b/src/runtime/runtime-literals.cc",
+            "@@ -519 +518,0 @@ Handle<JSObject> CreateObjectLiteral(",
+            "-  DirectHandle<NativeContext> native_context = isolate->native_context();",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_dead_context_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            f'    "{v8_shuffle_patch_name}",\n]',
+            f'    "{v8_shuffle_patch_name}",\n    "{v8_dead_context_patch_name}",\n]',
+        )
+
+    # gen-compile-cache is a build-time executable. Native workerd intentionally
+    # builds it in target configuration to avoid a second V8 build, but an
+    # Android cross-build cannot execute the resulting aarch64 binary on the
+    # x86_64 CI host. Build only this private tool in exec configuration.
+    js_bundle = tree / "build" / "wd_js_bundle.bzl"
+    js_bundle_text = js_bundle.read_text(encoding="utf-8")
+    compile_cache_target = (
+        '        "_tool": attr.label(\n'
+        '            executable = True,\n'
+        '            allow_single_file = True,\n'
+        '            cfg = "target",\n'
+        '            default = "//src/rust/gen-compile-cache",\n'
+        '        ),\n'
+    )
+    compile_cache_exec = (
+        '        "_tool": attr.label(\n'
+        '            executable = True,\n'
+        '            allow_single_file = True,\n'
+        '            cfg = "exec",\n'
+        '            default = "//src/rust/gen-compile-cache",\n'
+        '        ),\n'
+    )
+    if compile_cache_exec not in js_bundle_text:
+        replace_once(js_bundle, compile_cache_target, compile_cache_exec)
+
+    # Bionic's <endian.h> exposes htobe*/be*toh as macros/inlines rather than
+    # linkable global functions. workerd's wrapper header deliberately declares
+    # global functions, so provide Android definitions using compiler builtins.
+    endianness = tree / "src" / "workerd" / "api" / "crypto" / "endianness.c++"
+    endianness_text = endianness.read_text(encoding="utf-8")
+    android_endianness = r'''#if defined(__ANDROID__)
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+uint16_t htobe16(uint16_t x) { return __builtin_bswap16(x); }
+uint16_t htole16(uint16_t x) { return x; }
+uint16_t be16toh(uint16_t x) { return __builtin_bswap16(x); }
+uint16_t le16toh(uint16_t x) { return x; }
+uint32_t htobe32(uint32_t x) { return __builtin_bswap32(x); }
+uint32_t htole32(uint32_t x) { return x; }
+uint32_t be32toh(uint32_t x) { return __builtin_bswap32(x); }
+uint32_t le32toh(uint32_t x) { return x; }
+uint64_t htobe64(uint64_t x) { return __builtin_bswap64(x); }
+uint64_t htole64(uint64_t x) { return x; }
+uint64_t be64toh(uint64_t x) { return __builtin_bswap64(x); }
+uint64_t le64toh(uint64_t x) { return x; }
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+uint16_t htobe16(uint16_t x) { return x; }
+uint16_t htole16(uint16_t x) { return __builtin_bswap16(x); }
+uint16_t be16toh(uint16_t x) { return x; }
+uint16_t le16toh(uint16_t x) { return __builtin_bswap16(x); }
+uint32_t htobe32(uint32_t x) { return x; }
+uint32_t htole32(uint32_t x) { return __builtin_bswap32(x); }
+uint32_t be32toh(uint32_t x) { return x; }
+uint32_t le32toh(uint32_t x) { return __builtin_bswap32(x); }
+uint64_t htobe64(uint64_t x) { return x; }
+uint64_t htole64(uint64_t x) { return __builtin_bswap64(x); }
+uint64_t be64toh(uint64_t x) { return x; }
+uint64_t le64toh(uint64_t x) { return __builtin_bswap64(x); }
+#else
+#error byte order not supported
+#endif
+
+#elif defined(__linux__) || defined(__CYGWIN__)
+
+#include <endian.h>
+'''
+    if "#if defined(__ANDROID__)" not in endianness_text:
+        replace_once(
+            endianness,
+            "#if defined(__linux__) || defined(__CYGWIN__)\n\n#include <endian.h>\n",
+            android_endianness,
+        )
+
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
