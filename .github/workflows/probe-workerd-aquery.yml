@@ -4,18 +4,42 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v7
+      - name: Enable aarch64 containers through QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - name: Clone and patch exact workerd
         shell: bash
         run: |
           set -Eeuo pipefail
           git clone --filter=blob:none --depth=1 --branch v1.20260801.1 https://github.com/cloudflare/workerd.git workerd
           python3 scripts/patch_workerd_android.py workerd
-          grep -F 'build:android --//build/config:target_run_under=/usr/local/bin/workerd-android-run-under' workerd/.bazelrc
-          grep -F 'cfg = "target"' workerd/build/wd_js_bundle.bzl
-      - name: Select NDK and Bazelisk
+          grep -A4 -F 'name = "rust_cc_common_link"' workerd/build/config/BUILD.bazel \
+            | grep -F 'constraint_values = ["@platforms//os:android"]'
+      - name: Install workerd host LLVM 19 toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          curl -fsSL --retry 4 --retry-all-errors https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          sed -i '/apt-get install/d' /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang-19 \
+            lld-19 \
+            libunwind-19 \
+            libc++abi1-19 \
+            libc++1-19 \
+            libc++-19-dev \
+            libclang-rt-19-dev \
+            llvm-19
+          /usr/lib/llvm-19/bin/clang --version
+          /usr/lib/llvm-19/bin/ld.lld --version
+      - name: Prepare NDK, Bazelisk, and Android runtime
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -23,53 +47,50 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
           GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
           sudo install -m 0755 scripts/run_workerd_android_target_tool.sh /usr/local/bin/workerd-android-run-under
-      - name: Prove Android Rust final link uses NDK cc toolchain
+          docker pull --platform linux/arm64 termux/termux-docker:aarch64
+          builtins=$(find "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt" -type f \
+            -name 'libclang_rt.builtins-aarch64-android.a' -print -quit)
+          test -n "$builtins"
+          ndk_llvm_nm="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$ndk_llvm_nm" --defined-only "$builtins" | grep -E '(^|[[:space:]])__clear_cache$'
+      - name: Build Android gen-compile-cache through the NDK C++ linker
         working-directory: workerd
         shell: bash
         run: |
           set -Eeuo pipefail
-          common=(
-            --enable_platform_specific_config=false
-            --config=release_android
-            --platforms=//:android_arm64
-          )
-
-          grep -A4 -F 'name = "rust_cc_common_link"' build/config/BUILD.bazel \
-            | grep -F 'constraint_values = ["@platforms//os:android"]'
-
-          builtins=$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -type f \
-            -name 'libclang_rt.builtins-aarch64-android.a' -print -quit)
-          test -n "$builtins"
-          test -f "$builtins"
-          echo "compiler_rt_builtins=$builtins"
-          ndk_llvm_nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-          test -x "$ndk_llvm_nm"
-          "$ndk_llvm_nm" --defined-only "$builtins" | grep -E '(^|[[:space:]])__clear_cache$'
-
-          "$HOME/.local/bin/bazelisk" aquery \
-            'deps(//src/rust/gen-compile-cache:gen-compile-cache)' \
-            "${common[@]}" --output=text > "$RUNNER_TEMP/gen-compile-cache-aquery.txt"
-
-          grep -F "Target: //src/rust/gen-compile-cache:gen-compile-cache" \
-            "$RUNNER_TEMP/gen-compile-cache-aquery.txt" | head -10
-          grep -F 'Mnemonic: CppLink' "$RUNNER_TEMP/gen-compile-cache-aquery.txt" | head -10
-          grep -F 'gen-compile-cache' "$RUNNER_TEMP/gen-compile-cache-aquery.txt" \
-            | grep -F 'CppLink' -C2 || true
-
-          if grep -F 'gen-compile-cache' "$RUNNER_TEMP/gen-compile-cache-aquery.txt" \
-              | grep -F -- '-nodefaultlibs' >/dev/null; then
-            echo 'gen-compile-cache still uses the Rust -nodefaultlibs final-link path' >&2
+          "$HOME/.local/bin/bazelisk" build //src/rust/gen-compile-cache:gen-compile-cache \
+            --enable_platform_specific_config=false \
+            --config=release_android \
+            --platforms=//:android_arm64 \
+            --jobs=4 \
+            --verbose_failures
+      - name: Verify and execute gen-compile-cache in Termux
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          cp workerd/bazel-bin/src/rust/gen-compile-cache/gen-compile-cache dist/gen-compile-cache
+          chmod 0755 dist/gen-compile-cache
+          file dist/gen-compile-cache
+          readelf -h dist/gen-compile-cache | grep -E 'Machine:[[:space:]]+AArch64'
+          readelf -l dist/gen-compile-cache | grep -E 'Requesting program interpreter: /system/bin/linker64'
+          if readelf -d dist/gen-compile-cache | grep -F 'libc.so.6'; then
+            echo 'glibc dependency detected' >&2
             exit 1
           fi
-
-          # Retain the target-tool transition proof used by the full build graph.
-          "$HOME/.local/bin/bazelisk" aquery \
-            'deps(//src/per_isolate:per_isolate@compile_cache)' \
-            "${common[@]}" --output=text > "$RUNNER_TEMP/compile-cache-aquery.txt"
-          grep -F '/usr/local/bin/workerd-android-run-under' "$RUNNER_TEMP/compile-cache-aquery.txt" >/dev/null
-          if grep -F '/usr/bin/clang ' "$RUNNER_TEMP/compile-cache-aquery.txt" \
-              | grep -F -- '--embed-dir=' >/dev/null; then
-            echo 'ICU #embed leaked into stock host /usr/bin/clang' >&2
+          if readelf -l dist/gen-compile-cache | grep -E 'ld-linux|ld-musl'; then
+            echo 'non-Android ELF interpreter detected' >&2
             exit 1
           fi
-          echo android-rust-cc-common-link-analysis-ok
+          printf 'export default 1;\n' > dist/input.mjs
+          printf '/probe/input.mjs /probe/output.bin\n' > dist/manifest.txt
+          chmod 0777 dist
+          chmod a+r dist/input.mjs dist/manifest.txt
+          docker run --rm --platform linux/arm64 \
+            -v "$GITHUB_WORKSPACE/dist:/probe" \
+            termux/termux-docker:aarch64 \
+            /probe/gen-compile-cache /probe/manifest.txt
+          test -s dist/output.bin
+          file dist/output.bin
+          sha256sum dist/gen-compile-cache dist/output.bin
+          echo android-gen-compile-cache-real-link-and-runtime-ok
