@@ -355,6 +355,26 @@ selects.config_setting_group(
             f'    "{v8_shuffle_patch_name}",\n    "{v8_dead_context_patch_name}",\n]',
         )
 
+    # Older iterations of this port moved gen-compile-cache to exec
+    # configuration. Restore upstream's target configuration: workerd exposes
+    # target_run_under specifically so cross-built tools can execute without
+    # pulling their Android/V8 dependencies into the Linux host toolchain.
+    js_bundle = tree / "build" / "wd_js_bundle.bzl"
+    js_bundle_text = js_bundle.read_text(encoding="utf-8")
+    compile_cache_exec = (
+        '        "_tool": attr.label(\n'
+        '            executable = True,\n'
+        '            allow_single_file = True,\n'
+        '            cfg = "exec",\n'
+        '            default = "//src/rust/gen-compile-cache",\n'
+        '        ),\n'
+    )
+    compile_cache_target = compile_cache_exec.replace('cfg = "exec"', 'cfg = "target"')
+    if compile_cache_exec in js_bundle_text:
+        replace_once(js_bundle, compile_cache_exec, compile_cache_target)
+    elif compile_cache_target not in js_bundle_text:
+        raise RuntimeError("Could not find gen-compile-cache tool configuration")
+
     # Bionic's <endian.h> exposes htobe*/be*toh as macros/inlines rather than
     # linkable global functions. workerd's wrapper header deliberately declares
     # global functions, so provide Android definitions using compiler builtins.
@@ -442,6 +462,15 @@ build:release_android --@workerd//src/workerd/server:use_tcmalloc=False
 build:release_android --@workerd//src/workerd/util:use_perfetto=False
 ''',
             encoding="utf-8",
+        )
+
+    bazelrc_text = bazelrc.read_text(encoding="utf-8")
+    runner_setting = "build:android --//build/config:target_run_under=/usr/local/bin/workerd-android-run-under\n"
+    if runner_setting not in bazelrc_text:
+        replace_once(
+            bazelrc,
+            "build:android --@capnp-cpp//src/kj:libdl=False\n",
+            "build:android --@capnp-cpp//src/kj:libdl=False\n" + runner_setting,
         )
 
     print(f"Patched workerd Android target in {tree}")

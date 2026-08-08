@@ -1,7 +1,5 @@
 name: Probe latest Wrangler Termux esbuild
 on:
-  push:
-    branches: [probe-android-runner]
   workflow_dispatch:
 jobs:
   smoke:

@@ -1,5 +1,7 @@
 name: Probe workerd Android full
 on:
+  push:
+    branches: [probe-android-runner]
   workflow_dispatch:
 jobs:
   build:
