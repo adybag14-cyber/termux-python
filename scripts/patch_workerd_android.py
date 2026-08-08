@@ -423,6 +423,34 @@ uint64_t le64toh(uint64_t x) { return __builtin_bswap64(x); }
             android_endianness,
         )
 
+    # rules_rust normally invokes the NDK clang driver with -nodefaultlibs for
+    # Rust binaries that carry C++ link_deps. That suppresses Clang's compiler-rt
+    # builtins archive, but V8's AArch64 CpuFeatures::FlushICache references
+    # __clear_cache from compiler-rt. Workerd already supports linking Rust
+    # binaries through cc_common.link; enable that path only for Android so the
+    # NDK C++ toolchain owns the final link and supplies its normal compiler
+    # runtime while standalone Linux behavior remains unchanged.
+    rust_config = tree / "build" / "config" / "BUILD.bazel"
+    rust_config_text = rust_config.read_text(encoding="utf-8")
+    rust_cc_common_old = (
+        'config_setting(\n'
+        '    name = "rust_cc_common_link",\n'
+        '    values = {"define": "never_match=true"},  # This will never match\n'
+        '    visibility = ["//visibility:public"],\n'
+        ')\n'
+    )
+    rust_cc_common_android = (
+        'config_setting(\n'
+        '    name = "rust_cc_common_link",\n'
+        '    constraint_values = ["@platforms//os:android"],\n'
+        '    visibility = ["//visibility:public"],\n'
+        ')\n'
+    )
+    if rust_cc_common_old in rust_config_text:
+        replace_once(rust_config, rust_cc_common_old, rust_cc_common_android)
+    elif rust_cc_common_android not in rust_config_text:
+        raise RuntimeError("Could not configure Android Rust cc_common linking")
+
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")
     if '    "aarch64-linux-android",\n' not in rust_text:
@@ -467,6 +495,8 @@ build:release_android --@workerd//src/workerd/util:use_perfetto=False
     # Match workerd's supported Linux host-toolchain baseline. These settings only
     # configure Bazel's host/exec C++ toolchain; the Android target platform is
     # still compiled and linked by rules_android_ndk.
+    # LLVM 19 can emit out-of-line __atomic_* helpers in V8 exec binaries such as mksnapshot.
+    # Keep libatomic host-only so Android target C/C++ remains entirely under the NDK toolchain.
     host_toolchain_settings = (
         "build:android --repo_env=CC=/usr/lib/llvm-19/bin/clang\n",
         "build:android --repo_env=AR=/usr/lib/llvm-19/bin/llvm-ar\n",
