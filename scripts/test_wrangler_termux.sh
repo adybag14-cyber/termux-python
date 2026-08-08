@@ -30,7 +30,7 @@ native_root="$PREFIX/lib/wrangler/native"
 esbuild_version=$("$native_root/esbuild" --version)
 printf 'esbuild: %s\n' "$esbuild_version"
 [[ "$esbuild_version" == "$expected_esbuild" ]]
-workerd_version=$("$native_root/workerd" --version)
+workerd_version=$("$native_root/workerd" --version 2>&1)
 printf '%s\n' "$workerd_version"
 grep -F workerd <<<"$workerd_version"
 workerd_date=${expected_workerd#1.}
