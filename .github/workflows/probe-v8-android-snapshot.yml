@@ -1,0 +1,46 @@
+name: Probe V8 Android snapshot host tool
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: Clone and patch exact workerd
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --filter=blob:none --depth=1 --branch v1.20260801.1 https://github.com/cloudflare/workerd.git workerd
+          python3 scripts/patch_workerd_android.py workerd
+      - name: Install upstream LLVM 19 host toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          curl -fsSL --retry 4 --retry-all-errors https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          sed -i '/apt-get install/d' /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang-19 lld-19 libunwind-19 libc++abi1-19 libc++1-19 libc++-19-dev libclang-rt-19-dev llvm-19
+          /usr/lib/llvm-19/bin/clang --version
+      - name: Prepare NDK and Bazelisk
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "$ANDROID_NDK_LATEST_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
+      - name: Build ARM64 ICU snapshot through exec mksnapshot
+        working-directory: workerd
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          "$HOME/.local/bin/bazelisk" build @v8//:icu/generated_snapshot_files \
+            --enable_platform_specific_config=false \
+            --config=release_android \
+            --platforms=//:android_arm64 \
+            --jobs=4 \
+            --verbose_failures
+          echo v8-android-exec-snapshot-ok
