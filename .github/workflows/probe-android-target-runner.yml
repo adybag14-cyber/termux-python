@@ -44,8 +44,7 @@ jobs:
           trap 'rm -f "$staged"' EXIT
           cp -L "$tool" "$staged"
           chmod +x "$staged"
-          docker run --rm --platform linux/arm64 \
-            -v "$here:$here" -w "$here" \
+          docker run --rm --platform linux/arm64 \\`n            --user "$(id -u):$(id -g)" \\`n            -v "$here:$here" -w "$here" \
             termux/termux-docker:aarch64 \
             "$staged" "$@"
           SH
