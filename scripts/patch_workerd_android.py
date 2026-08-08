@@ -471,6 +471,7 @@ build:release_android --@workerd//src/workerd/util:use_perfetto=False
         "build:android --repo_env=CC=/usr/lib/llvm-19/bin/clang\n",
         "build:android --repo_env=AR=/usr/lib/llvm-19/bin/llvm-ar\n",
         "build:android --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld\n",
+        "build:android --host_linkopt=-latomic\n",
     )
     bazelrc_text = bazelrc.read_text(encoding="utf-8")
     missing_host_settings = [

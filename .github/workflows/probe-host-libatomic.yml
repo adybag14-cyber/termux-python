@@ -1,0 +1,51 @@
+name: Probe workerd host libatomic analysis
+on:
+  push:
+    branches: [probe-android-runner]
+    paths: ['.github/workflows/probe-host-libatomic.yml']
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Clone and patch exact workerd
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --filter=blob:none --depth=1 --branch v1.20260801.1 https://github.com/cloudflare/workerd.git workerd
+          python3 scripts/patch_workerd_android.py workerd
+          grep -Fx 'build:android --host_linkopt=-latomic' workerd/.bazelrc
+          grep -Fx 'build:android --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld' workerd/.bazelrc
+      - name: Install LLVM 19 host toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          curl -fsSL --retry 4 --retry-all-errors https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          sed -i '/apt-get install/d' /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends clang-19 lld-19 llvm-19
+      - name: Prepare NDK and Bazelisk
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "$ANDROID_NDK_LATEST_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
+      - name: Prove exec mksnapshot link receives libatomic
+        working-directory: workerd
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          common=(
+            --enable_platform_specific_config=false
+            --config=release_android
+            --platforms=//:android_arm64
+          )
+          "$HOME/.local/bin/bazelisk" aquery 'mnemonic("CppLink", deps(@v8//:icu/generated_snapshot_files))' "${common[@]}" --output=text > "$RUNNER_TEMP/mksnapshot-link.txt"
+          grep -n -B8 -A24 -F 'mksnapshot' "$RUNNER_TEMP/mksnapshot-link.txt" | head -160 || true
+          grep -F -- '-latomic' "$RUNNER_TEMP/mksnapshot-link.txt" >/dev/null
+          grep -F '/usr/lib/llvm-19/bin/clang' "$RUNNER_TEMP/mksnapshot-link.txt" >/dev/null
+          echo host-libatomic-aquery-ok
