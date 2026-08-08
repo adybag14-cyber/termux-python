@@ -42,6 +42,7 @@ jobs:
       - name: Build and deploy Wrangler from source
         env:
           PNPM_VERSION: ${{ steps.versions.outputs.pnpm }}
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
           NODE_ENV: production
           CI_OS: Linux
           WRANGLER_SEND_METRICS: "false"
