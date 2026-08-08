@@ -99,23 +99,34 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          cat > termux-esbuild-smoke.sh <<'SH'
+          #!/data/data/com.termux/files/usr/bin/bash
+          set -Eeuo pipefail
+          expected_wrangler=$1
+          expected_esbuild=$2
+          deb="/work/dist/wrangler_${expected_wrangler}_aarch64.deb"
+          apt-get update
+          apt-get install -y --allow-downgrades --no-install-recommends curl "$deb"
+          test "$(node -p 'process.platform + ":" + process.arch')" = android:arm64
+          wrangler --version | grep -F "$expected_wrangler"
+          test "$("$PREFIX/lib/wrangler/native/esbuild" --version)" = "$expected_esbuild"
+          rm -rf "$HOME/esbuild-smoke"
+          mkdir "$HOME/esbuild-smoke"
+          cd "$HOME/esbuild-smoke"
+          cat > index.js <<'JS'
+          export default { fetch() { return new Response("ok"); } };
+          JS
+          cat > wrangler.jsonc <<'JSON'
+          {"name":"termux-esbuild-smoke","main":"index.js","compatibility_date":"2026-08-01"}
+          JSON
+          CI=1 WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir "$HOME/esbuild-smoke/out"
+          test -n "$(find "$HOME/esbuild-smoke/out" -type f -print -quit)"
+          echo wrangler-termux-esbuild-ok
+          SH
+          chmod a+rx termux-esbuild-smoke.sh
           chmod -R a+rX dist scripts
-          docker run --rm --platform linux/arm64             -v "$PWD:/work"             -e EXPECTED_WRANGLER="$WRANGLER_VERSION"             -e EXPECTED_ESBUILD="$ESBUILD_VERSION"             termux/termux-docker:aarch64             /entrypoint.sh bash -lc '
-              set -Eeuo pipefail
-              deb=/work/dist/wrangler_${EXPECTED_WRANGLER}_aarch64.deb
-              apt-get update
-              apt-get install -y --allow-downgrades --no-install-recommends curl "$deb"
-              test "$(node -p "process.platform + ":" + process.arch")" = android:arm64
-              wrangler --version | grep -F "$expected_wrangler"
-              test "$("$PREFIX/lib/wrangler/native/esbuild" --version)" = "$expected_esbuild"
-              rm -rf "$HOME/esbuild-smoke" && mkdir "$HOME/esbuild-smoke" && cd "$HOME/esbuild-smoke"
-              cat > index.js <<"JS"
-              export default { fetch() { return new Response("ok"); } };
-              JS
-              cat > wrangler.jsonc <<"JSON"
-              {"name":"termux-esbuild-smoke","main":"index.js","compatibility_date":"2026-08-01"}
-              JSON
-              CI=1 WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir "$HOME/esbuild-smoke/out"
-              test -n "$(find "$HOME/esbuild-smoke/out" -type f -print -quit)"
-              echo wrangler-termux-esbuild-ok
-            ' bash "$WRANGLER_VERSION" "$ESBUILD_VERSION"
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/work" \
+            termux/termux-docker:aarch64 \
+            /entrypoint.sh bash /work/termux-esbuild-smoke.sh \
+            "$WRANGLER_VERSION" "$ESBUILD_VERSION"
