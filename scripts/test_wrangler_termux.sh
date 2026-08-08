@@ -85,6 +85,10 @@ JSON
 # Android esbuild binary without needing Cloudflare credentials.
 wrangler deploy --dry-run --outdir "$smoke/dry-run"
 
+# `cf-wrangler` is a distinct upstream delegate rather than an alias. Exercise
+# its real build path too, not just the feature-detection/usage branch above.
+cf-wrangler build
+
 dev_log="$smoke/wrangler-dev.log"
 wrangler dev --ip 127.0.0.1 --port 8791 >"$dev_log" 2>&1 &
 pid=$!
