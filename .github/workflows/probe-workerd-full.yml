@@ -17,6 +17,7 @@ jobs:
           set -Eeuo pipefail
           git clone --filter=blob:none --depth=1 --branch v1.20260801.1 https://github.com/cloudflare/workerd.git workerd
           python3 scripts/patch_workerd_android.py workerd
+          grep -A4 -F 'name = "rust_cc_common_link"' workerd/build/config/BUILD.bazel             | grep -F 'constraint_values = ["@platforms//os:android"]'
       - name: Install workerd host LLVM 19 toolchain
         shell: bash
         run: |
@@ -47,6 +48,13 @@ jobs:
           test -x /usr/lib/llvm-19/bin/llvm-ar
           test -d "$ANDROID_NDK_LATEST_HOME"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          ndk_prebuilt=$(find "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt"             -mindepth 1 -maxdepth 1 -type d -print -quit)
+          test -n "$ndk_prebuilt"
+          builtins=$(find "$ndk_prebuilt" -type f             -name 'libclang_rt.builtins-aarch64-android.a' -print -quit)
+          test -n "$builtins"
+          test -x "$ndk_prebuilt/bin/llvm-nm"
+          "$ndk_prebuilt/bin/llvm-nm" --defined-only "$builtins"             | grep -E '(^|[[:space:]])__clear_cache$'
+          echo "Android compiler-rt builtins: $builtins"
           GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
           sudo install -m 0755 scripts/run_workerd_android_target_tool.sh /usr/local/bin/workerd-android-run-under
           docker pull --platform linux/arm64 termux/termux-docker:aarch64
