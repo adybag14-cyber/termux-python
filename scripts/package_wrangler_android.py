@@ -209,8 +209,10 @@ def main() -> int:
         "@img/sharp-linux",
         "@img/sharp-win32",
         "@img/sharp-darwin",
+        "@img/sharp-wasm",
         "@img/sharp-libvips-linux",
         "@img/sharp-libvips-darwin",
+        "@img/sharp-libvips-wasm",
     )
     for path in deploy.rglob("package.json"):
         try:
