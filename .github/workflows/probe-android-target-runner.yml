@@ -51,22 +51,38 @@ jobs:
           shift
           here=$PWD
           manifest=${1:-}
-          staged=$(mktemp -p "$here" .android-runner-tool.XXXXXX)
-          trap 'rm -f "$staged"' EXIT
-          cp -L "$tool" "$staged"
-          chmod +x "$staged"
+          [[ -f "$manifest" ]] || { echo "expected compile-cache manifest as first argument: $manifest" >&2; exit 2; }
+          staged_tool=$(mktemp -p "$here" .android-runner-tool.XXXXXX)
+          staged_manifest=$(mktemp -p "$here" .android-runner-manifest.XXXXXX)
+          staged_inputs=()
+          outputs=()
+          cleanup() {
+            rm -f "$staged_tool" "$staged_manifest"
+            if ((${#staged_inputs[@]})); then rm -f "${staged_inputs[@]}"; fi
+          }
+          trap cleanup EXIT
+          cp -L "$tool" "$staged_tool"
+          chmod +x "$staged_tool"
+          index=0
+          while read -r input output; do
+            [[ -n "${input:-}" && -n "${output:-}" ]] || continue
+            staged_input="$here/.android-runner-input.$index"
+            cp -L "$input" "$staged_input"
+            staged_inputs+=("$staged_input")
+            outputs+=("$output")
+            printf '%s %s\n' "$staged_input" "$output" >> "$staged_manifest"
+            index=$((index + 1))
+          done < "$manifest"
           docker run --rm --platform linux/arm64 \
-            -v "$HOME:$HOME" -w "$here" \
+            -v "$here:$here" -w "$here" \
             termux/termux-docker:aarch64 \
-            "$staged" "$@"
-          if [[ -f "$manifest" ]]; then
-            while read -r _ output; do
-              [[ -n "${output:-}" && -e "$output" ]] || continue
-              sudo chown "$(id -u):$(id -g)" "$output"
-            done < "$manifest"
-          fi
+            "$staged_tool" "$staged_manifest"
+          for output in "${outputs[@]}"; do
+            [[ -e "$output" ]] || { echo "Android tool did not produce $output" >&2; exit 1; }
+            sudo chown "$(id -u):$(id -g)" "$output"
+          done
           SH
           chmod +x /usr/local/bin/workerd-android-run-under
           /usr/local/bin/workerd-android-run-under ./hello manifest.txt
           test "$(stat -c %u generated.out)" = "$(id -u)"
-          grep -F 'android-runner-ok input=hello.c' generated.out
+          grep -F 'android-runner-ok input=' generated.out
