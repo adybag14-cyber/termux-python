@@ -62,24 +62,28 @@ jobs:
           }
           trap cleanup EXIT
           cp -L "$tool" "$staged_tool"
-          chmod +x "$staged_tool"
+          chmod a+rx "$staged_tool"
           index=0
           while read -r input output; do
             [[ -n "${input:-}" && -n "${output:-}" ]] || continue
             staged_input="$here/.android-runner-input.$index"
             cp -L "$input" "$staged_input"
+            chmod a+r "$staged_input"
             staged_inputs+=("$staged_input")
             outputs+=("$output")
+            mkdir -p "$(dirname "$output")"
+            : > "$output"
+            chmod a+rw "$output"
             printf '%s %s\n' "$staged_input" "$output" >> "$staged_manifest"
             index=$((index + 1))
           done < "$manifest"
+          chmod a+r "$staged_manifest"
           docker run --rm --platform linux/arm64 \
             -v "$here:$here" -w "$here" \
             termux/termux-docker:aarch64 \
             "$staged_tool" "$staged_manifest"
           for output in "${outputs[@]}"; do
             [[ -e "$output" ]] || { echo "Android tool did not produce $output" >&2; exit 1; }
-            sudo chown "$(id -u):$(id -g)" "$output"
           done
           SH
           chmod +x /usr/local/bin/workerd-android-run-under
