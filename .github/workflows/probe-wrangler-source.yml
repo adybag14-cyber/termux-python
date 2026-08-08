@@ -51,7 +51,31 @@ jobs:
           npm install --global "pnpm@$PNPM_VERSION"
           cd workers-sdk
           pnpm --filter='wrangler...' install --frozen-lockfile --ignore-scripts
-          ESBUILD_BINARY_PATH="$GITHUB_WORKSPACE/host-tools/esbuild" pnpm --filter='wrangler...' build
+          cd "$GITHUB_WORKSPACE"
+          mapfile -t esbuild_versions < <(
+            find workers-sdk/node_modules/.pnpm -path '*/node_modules/esbuild/package.json' -type f -print0 |
+              xargs -0 -r -n1 jq -r .version | sort -Vu
+          )
+          printf 'Filtered Wrangler graph esbuild versions: %s\n' "${esbuild_versions[*]}"
+          for version in "${esbuild_versions[@]}"; do
+            if [[ "$version" == "$ESBUILD_VERSION" ]]; then
+              binary="$GITHUB_WORKSPACE/host-tools/esbuild"
+            else
+              src="$RUNNER_TEMP/esbuild-src-$version"
+              git clone --filter=blob:none --depth=1 --branch "v$version" https://github.com/evanw/esbuild.git "$src"
+              binary="$RUNNER_TEMP/esbuild-$version"
+              (cd "$src" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$binary" ./cmd/esbuild)
+            fi
+            test "$("$binary" --version)" = "$version"
+            mapfile -t targets < <(find workers-sdk/node_modules/.pnpm               -path "*/@esbuild+linux-x64@$version/node_modules/@esbuild/linux-x64/bin/esbuild" -type f)
+            ((${#targets[@]} > 0)) || { echo "No installed @esbuild/linux-x64 target for $version" >&2; exit 1; }
+            for target in "${targets[@]}"; do
+              install -m 0755 "$binary" "$target"
+              test "$("$target" --version)" = "$version"
+            done
+          done
+          cd workers-sdk
+          pnpm --filter='wrangler...' build
           pnpm --filter=wrangler deploy "$GITHUB_WORKSPACE/wrangler-deploy" --prod --legacy --no-optional --ignore-scripts
       - name: Package latest deployment structurally
         env:
