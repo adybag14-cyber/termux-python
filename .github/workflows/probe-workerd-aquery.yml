@@ -1,7 +1,5 @@
 name: Probe workerd Android analysis
 on:
-  push:
-    branches: [probe-android-runner]
   workflow_dispatch:
 jobs:
   analyze:

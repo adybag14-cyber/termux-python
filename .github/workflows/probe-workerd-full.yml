@@ -1,0 +1,57 @@
+name: Probe workerd Android full
+on:
+  push:
+    branches: [probe-android-runner]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v7
+      - name: Enable aarch64 containers through QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Clone and patch exact workerd
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --filter=blob:none --depth=1 --branch v1.20260801.1 https://github.com/cloudflare/workerd.git workerd
+          python3 scripts/patch_workerd_android.py workerd
+      - name: Prepare NDK, Bazelisk, and Android target runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "$ANDROID_NDK_LATEST_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
+          sudo install -m 0755 scripts/run_workerd_android_target_tool.sh /usr/local/bin/workerd-android-run-under
+          docker pull --platform linux/arm64 termux/termux-docker:aarch64
+      - name: Build workerd from source for Android aarch64
+        working-directory: workerd
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          "$HOME/.local/bin/bazelisk" build //src/workerd/server:workerd             --enable_platform_specific_config=false             --config=release_android             --platforms=//:android_arm64             --jobs=4             --verbose_failures
+      - name: Verify Android ELF
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          cp workerd/bazel-bin/src/workerd/server/workerd dist/workerd-android-aarch64
+          chmod +x dist/workerd-android-aarch64
+          file dist/workerd-android-aarch64
+          readelf -h dist/workerd-android-aarch64 | grep -E 'Machine:[[:space:]]+AArch64'
+          readelf -l dist/workerd-android-aarch64 | grep -E 'Requesting program interpreter: /system/bin/linker64'
+          if readelf -d dist/workerd-android-aarch64 | grep -F 'libc.so.6'; then
+            echo 'glibc dependency detected' >&2
+            exit 1
+          fi
+          sha256sum dist/workerd-android-aarch64
+      - uses: actions/upload-artifact@v6
+        with:
+          name: workerd-android-aarch64
+          path: dist/workerd-android-aarch64
+          if-no-files-found: error
+          retention-days: 3
