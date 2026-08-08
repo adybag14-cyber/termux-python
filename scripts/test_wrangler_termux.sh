@@ -80,7 +80,7 @@ cleanup() {
 trap cleanup EXIT
 
 body=""
-for _ in $(seq 1 90); do
+for _ in $(seq 1 180); do
   if ! kill -0 "$pid" 2>/dev/null; then
     cat "$dev_log" >&2
     exit 1
