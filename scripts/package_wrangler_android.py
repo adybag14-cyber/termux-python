@@ -253,23 +253,30 @@ def main() -> int:
 
         bin_dir = prefix / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        launcher = bin_dir / "wrangler"
-        launcher.write_text(
-            """#!/data/data/com.termux/files/usr/bin/sh
+
+        def write_launcher(name: str, entrypoint: str) -> None:
+            source_entrypoint = app / "bin" / entrypoint
+            if not source_entrypoint.is_file():
+                raise RuntimeError(f"Wrangler entrypoint missing from deployment: {source_entrypoint}")
+            launcher = bin_dir / name
+            launcher.write_text(
+                f"""#!/data/data/com.termux/files/usr/bin/sh
 set -eu
-PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
+PREFIX=${{PREFIX:-/data/data/com.termux/files/usr}}
 export WRANGLER_HOME="$PREFIX/lib/wrangler"
 export WORKERD_BINARY_PATH="$WRANGLER_HOME/native/workerd"
 export MINIFLARE_WORKERD_PATH="$WORKERD_BINARY_PATH"
 export ESBUILD_BINARY_PATH="$WRANGLER_HOME/native/esbuild"
-exec "$PREFIX/bin/node" "$WRANGLER_HOME/bin/wrangler.js" "$@"
+exec "$PREFIX/bin/node" "$WRANGLER_HOME/bin/{entrypoint}" "$@"
 """,
-            encoding="utf-8",
-            newline="\n",
-        )
-        launcher.chmod(0o755)
-        for alias in ("wrangler2", "cf-wrangler"):
-            os.symlink("wrangler", bin_dir / alias)
+                encoding="utf-8",
+                newline="\n",
+            )
+            launcher.chmod(0o755)
+
+        write_launcher("wrangler", "wrangler.js")
+        os.symlink("wrangler", bin_dir / "wrangler2")
+        write_launcher("cf-wrangler", "cf-wrangler.js")
 
         docs = prefix / "share" / "doc" / "wrangler"
         docs.mkdir(parents=True, exist_ok=True)

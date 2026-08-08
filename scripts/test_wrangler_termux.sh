@@ -26,6 +26,21 @@ version_output=$(wrangler --version)
 printf '%s\n' "$version_output"
 grep -F "$expected" <<<"$version_output"
 
+wrangler2_version=$(wrangler2 --version)
+printf '%s\n' "$wrangler2_version"
+grep -F "$expected" <<<"$wrangler2_version"
+
+set +e
+cf_output=$(cf-wrangler 2>&1)
+cf_status=$?
+set -e
+printf '%s\n' "$cf_output"
+[[ "$cf_status" -eq 2 ]] || {
+  echo "cf-wrangler feature-detection exit mismatch: $cf_status" >&2
+  exit 1
+}
+grep -F 'Usage: cf-wrangler <dev|build>' <<<"$cf_output"
+
 native_root="$PREFIX/lib/wrangler/native"
 esbuild_version=$("$native_root/esbuild" --version)
 printf 'esbuild: %s\n' "$esbuild_version"
