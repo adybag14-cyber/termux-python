@@ -42,7 +42,7 @@ jobs:
           test -n "$builtins"
           test -f "$builtins"
           echo "compiler_rt_builtins=$builtins"
-          llvm-nm --defined-only "$builtins" | grep -E '(^|[[:space:]])__clear_cache$'
+          ndk_llvm_nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"`n          test -x "$ndk_llvm_nm"`n          "$ndk_llvm_nm" --defined-only "$builtins" | grep -E '(^|[[:space:]])__clear_cache$'
 
           "$HOME/.local/bin/bazelisk" aquery \
             'deps(//src/rust/gen-compile-cache:gen-compile-cache)' \
