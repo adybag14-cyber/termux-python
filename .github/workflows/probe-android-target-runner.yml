@@ -1,0 +1,53 @@
+name: Probe Android target runner
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Build Android aarch64 test executable
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ndk=$(find /usr/local/lib/android/sdk/ndk -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          cat > hello.c <<'C'
+          #include <stdio.h>
+          #include <unistd.h>
+          int main(int argc, char** argv) {
+            printf("android-runner-ok argc=%d pid=%ld arg=%s\n", argc, (long)getpid(), argc > 1 ? argv[1] : "-");
+            return 0;
+          }
+          C
+          "$clang" hello.c -o hello
+          file hello
+          readelf -l hello | grep -E 'interpreter|Requesting'
+      - name: Run Android executable through Termux container wrapper
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker pull --platform linux/arm64 termux/termux-docker:aarch64
+          cat > /usr/local/bin/workerd-android-run-under <<'SH'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          tool=$1
+          shift
+          here=$PWD
+          staged=$(mktemp -p "$here" .android-runner-tool.XXXXXX)
+          trap 'rm -f "$staged"' EXIT
+          cp -L "$tool" "$staged"
+          chmod +x "$staged"
+          docker run --rm --platform linux/arm64 \
+            -v "$here:$here" -w "$here" \
+            termux/termux-docker:aarch64 \
+            "$staged" "$@"
+          SH
+          chmod +x /usr/local/bin/workerd-android-run-under
+          /usr/local/bin/workerd-android-run-under ./hello sentinel | tee output.txt
+          grep -F 'android-runner-ok' output.txt
+          grep -F 'arg=sentinel' output.txt
