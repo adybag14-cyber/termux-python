@@ -106,8 +106,8 @@ jobs:
               apt-get update
               apt-get install -y --allow-downgrades --no-install-recommends curl "$deb"
               test "$(node -p "process.platform + ":" + process.arch")" = android:arm64
-              wrangler --version | grep -F "$EXPECTED_WRANGLER"
-              test "$("$PREFIX/lib/wrangler/native/esbuild" --version)" = "$EXPECTED_ESBUILD"
+              wrangler --version | grep -F "$expected_wrangler"
+              test "$("$PREFIX/lib/wrangler/native/esbuild" --version)" = "$expected_esbuild"
               rm -rf "$HOME/esbuild-smoke" && mkdir "$HOME/esbuild-smoke" && cd "$HOME/esbuild-smoke"
               cat > index.js <<"JS"
               export default { fetch() { return new Response("ok"); } };
@@ -118,4 +118,4 @@ jobs:
               CI=1 WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir "$HOME/esbuild-smoke/out"
               test -n "$(find "$HOME/esbuild-smoke/out" -type f -print -quit)"
               echo wrangler-termux-esbuild-ok
-            '
+            ' bash "$WRANGLER_VERSION" "$ESBUILD_VERSION"
