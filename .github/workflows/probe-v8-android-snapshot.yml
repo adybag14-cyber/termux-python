@@ -1,5 +1,8 @@
 name: Probe V8 Android snapshot host tool
 on:
+  push:
+    branches: [probe-android-runner]
+    paths: ['.github/workflows/probe-v8-android-snapshot.yml']
   workflow_dispatch:
 jobs:
   probe:

@@ -1,11 +1,6 @@
 name: Probe Clang 19 V8 consteval
 
-on:
-  push:
-    branches: [probe-android-runner]
-  workflow_dispatch:
-
-jobs:
+on:`n  workflow_dispatch:`njobs:
   probe:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
