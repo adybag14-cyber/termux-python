@@ -464,7 +464,6 @@ build:release_android --@workerd//src/workerd/util:use_perfetto=False
             encoding="utf-8",
         )
 
-    bazelrc_text = bazelrc.read_text(encoding="utf-8")
     # Match workerd's supported Linux host-toolchain baseline. These settings only
     # configure Bazel's host/exec C++ toolchain; the Android target platform is
     # still compiled and linked by rules_android_ndk.
@@ -474,13 +473,16 @@ build:release_android --@workerd//src/workerd/util:use_perfetto=False
         "build:android --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld\n",
     )
     bazelrc_text = bazelrc.read_text(encoding="utf-8")
-    missing_host_settings = [setting for setting in host_toolchain_settings if setting not in bazelrc_text]
+    missing_host_settings = [
+        setting for setting in host_toolchain_settings if setting not in bazelrc_text
+    ]
     if missing_host_settings:
         replace_once(
             bazelrc,
             "build:android --@capnp-cpp//src/kj:libdl=False\n",
             "build:android --@capnp-cpp//src/kj:libdl=False\n" + "".join(missing_host_settings),
         )
+        bazelrc_text = bazelrc.read_text(encoding="utf-8")
 
     runner_setting = "build:android --//build/config:target_run_under=/usr/local/bin/workerd-android-run-under\n"
     if runner_setting not in bazelrc_text:

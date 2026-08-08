@@ -17,10 +17,34 @@ jobs:
           set -Eeuo pipefail
           git clone --filter=blob:none --depth=1 --branch v1.20260801.1 https://github.com/cloudflare/workerd.git workerd
           python3 scripts/patch_workerd_android.py workerd
+      - name: Install workerd host LLVM 19 toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          curl -fsSL --retry 4 --retry-all-errors https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          sed -i '/apt-get install/d' /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang-19 \
+            lld-19 \
+            libunwind-19 \
+            libc++abi1-19 \
+            libc++1-19 \
+            libc++-19-dev \
+            libclang-rt-19-dev \
+            llvm-19
+          /usr/lib/llvm-19/bin/clang --version
+          /usr/lib/llvm-19/bin/ld.lld --version
+          /usr/lib/llvm-19/bin/llvm-ar --version
       - name: Prepare NDK, Bazelisk, and Android target runner
         shell: bash
         run: |
           set -Eeuo pipefail
+          test -x /usr/lib/llvm-19/bin/clang
+          test -x /usr/lib/llvm-19/bin/ld.lld
+          test -x /usr/lib/llvm-19/bin/llvm-ar
           test -d "$ANDROID_NDK_LATEST_HOME"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
           GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
