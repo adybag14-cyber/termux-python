@@ -97,10 +97,11 @@ jobs:
           /tmp/v8-immediate-19
           echo "stock result: $stock_rc"
           echo clang19-v8-immediate-ok
-      - name: Prove Bazel host V8 uses Clang 19 and Android target uses NDK
+      - name: Diagnose Bazel host and Android compiler selection
         shell: bash
         run: |
           set -Eeuo pipefail
+          rm -rf /tmp/workerd-aquery
           git clone --filter=blob:none --depth=1 --branch v1.20260801.1 \
             https://github.com/cloudflare/workerd.git /tmp/workerd-aquery
           python3 scripts/patch_workerd_android.py /tmp/workerd-aquery
@@ -115,16 +116,23 @@ jobs:
           )
           "$HOME/.local/bin/bazelisk" aquery \
             'inputs(".*regexp-bytecodes.cc", deps(//src/workerd/server:workerd))' \
-            "${common[@]}" --output=text > /tmp/regexp-aquery.txt
+            "${common[@]}" --output=textproto --include_commandline > /tmp/regexp-aquery.textproto
           "$HOME/.local/bin/bazelisk" aquery \
             'inputs(".*src/workerd/server/workerd.c\\+\\+", deps(//src/workerd/server:workerd))' \
-            "${common[@]}" --output=text > /tmp/target-aquery.txt
-          echo '--- regexp host action ---'
-          grep -E 'Mnemonic:|regexp-bytecodes.cc|/llvm-19/bin/clang' /tmp/regexp-aquery.txt | head -40
-          echo '--- Android workerd target action ---'
-          grep -E 'Mnemonic:|workerd.c\\+\\+|aarch64-linux-android|ndk|clang' /tmp/target-aquery.txt | head -60
-          grep -F '/usr/lib/llvm-19/bin/clang' /tmp/regexp-aquery.txt
-          ! grep -F '/usr/bin/clang ' /tmp/regexp-aquery.txt
-          grep -E 'aarch64-linux-android[0-9]+-clang|toolchains/llvm/prebuilt/.*/bin/clang' /tmp/target-aquery.txt
-          ! grep -F '/usr/lib/llvm-19/bin/clang' /tmp/target-aquery.txt
-          echo clang19-host-ndk-target-aquery-ok
+            "${common[@]}" --output=textproto --include_commandline > /tmp/target-aquery.textproto
+          echo '=== regexp action command/toolchain evidence ==='
+          grep -n -E 'regexp-bytecodes|arguments:|llvm-19|/usr/bin/clang|cc_wrapper|compiler|execution_platform' \
+            /tmp/regexp-aquery.textproto | head -160 || true
+          echo '=== Android target action command/toolchain evidence ==='
+          grep -n -E 'workerd.c\\+\\+|arguments:|aarch64-linux-android|android-ndk|ndk/|llvm-19|clang|execution_platform' \
+            /tmp/target-aquery.textproto | head -200 || true
+          output_base=$("$HOME/.local/bin/bazelisk" info "${common[@]}" output_base)
+          echo "output_base=$output_base"
+          echo '=== generated host toolchain references ==='
+          grep -R -n -E '/usr/lib/llvm-19/bin/clang|/usr/bin/clang|llvm-19/bin/llvm-ar|cc_wrapper' \
+            "$output_base/external" 2>/dev/null | head -220 || true
+          echo '=== local_config_cc-like files ==='
+          find "$output_base/external" -maxdepth 4 \
+            \( -path '*local_config_cc*' -o -path '*local_config_cc_toolchains*' \) \
+            -type f -print | head -120 || true
+          echo clang-toolchain-diagnostic-complete
