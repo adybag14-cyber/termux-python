@@ -1,0 +1,79 @@
+name: Probe latest Wrangler source package
+on:
+  push:
+    branches: [probe-android-runner]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve latest Wrangler pins
+        id: versions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          wrangler=$(curl -fsSL https://registry.npmjs.org/wrangler/latest | jq -r .version)
+          git clone --filter=blob:none --depth=1 --branch "wrangler@$wrangler" https://github.com/cloudflare/workers-sdk.git workers-sdk
+          workerd=$(sed -n 's/^  workerd: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
+          esbuild=$(sed -n 's/^  esbuild: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
+          node=$(jq -r .volta.node workers-sdk/package.json)
+          pnpm=$(jq -r .packageManager workers-sdk/package.json | sed 's/^pnpm@//')
+          printf 'wrangler=%s\nworkerd=%s\nesbuild=%s\nnode=%s\npnpm=%s\n' "$wrangler" "$workerd" "$esbuild" "$node" "$pnpm"
+          echo "wrangler=$wrangler" >> "$GITHUB_OUTPUT"
+          echo "workerd=$workerd" >> "$GITHUB_OUTPUT"
+          echo "esbuild=$esbuild" >> "$GITHUB_OUTPUT"
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$pnpm" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+      - name: Build exact host esbuild from source
+        env:
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --filter=blob:none --depth=1 --branch "v$ESBUILD_VERSION" https://github.com/evanw/esbuild.git esbuild-src
+          mkdir host-tools
+          (cd esbuild-src && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o ../host-tools/esbuild ./cmd/esbuild)
+          test "$(host-tools/esbuild --version)" = "$ESBUILD_VERSION"
+      - name: Build and deploy Wrangler from source
+        env:
+          PNPM_VERSION: ${{ steps.versions.outputs.pnpm }}
+          ESBUILD_BINARY_PATH: ${{ github.workspace }}/host-tools/esbuild
+          NODE_ENV: production
+          CI_OS: Linux
+          WRANGLER_SEND_METRICS: "false"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm install --global "pnpm@$PNPM_VERSION"
+          cd workers-sdk
+          pnpm --filter='wrangler...' install --frozen-lockfile
+          pnpm --filter='wrangler...' build
+          pnpm --filter=wrangler deploy "$GITHUB_WORKSPACE/wrangler-deploy" --prod --legacy --no-optional --ignore-scripts
+      - name: Package latest deployment structurally
+        env:
+          WRANGLER_VERSION: ${{ steps.versions.outputs.wrangler }}
+          WORKERD_VERSION: ${{ steps.versions.outputs.workerd }}
+          ESBUILD_VERSION: ${{ steps.versions.outputs.esbuild }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p native dist
+          printf '#!/data/data/com.termux/files/usr/bin/sh\necho workerd placeholder\n' > native/workerd
+          printf '#!/data/data/com.termux/files/usr/bin/sh\necho %s\n' "$ESBUILD_VERSION" > native/esbuild
+          chmod +x native/workerd native/esbuild
+          python3 scripts/package_wrangler_android.py             --deploy wrangler-deploy             --workerd-binary native/workerd             --esbuild-binary native/esbuild             --wrangler-version "$WRANGLER_VERSION"             --workerd-version "$WORKERD_VERSION"             --esbuild-version "$ESBUILD_VERSION"             --output-dir dist
+          deb="dist/wrangler_${WRANGLER_VERSION}_aarch64.deb"
+          test "$(dpkg-deb -f "$deb" Package)" = wrangler
+          test "$(dpkg-deb -f "$deb" Version)" = "$WRANGLER_VERSION"
+          test "$(dpkg-deb -f "$deb" Architecture)" = aarch64
+          mkdir extract
+          dpkg-deb -x "$deb" extract
+          grep -F 'WORKERD_BINARY_PATH' extract/data/data/com.termux/files/usr/lib/wrangler/node_modules/workerd/lib/main.js
+          ! find extract/data/data/com.termux/files/usr/lib/wrangler -type l -lname '/*' -print -quit | grep .
+          ! grep -R -n -E '^#!(/bin|/usr/bin)' extract/data/data/com.termux/files/usr/lib/wrangler
+          echo latest-wrangler-source-package-ok
