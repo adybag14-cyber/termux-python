@@ -6,16 +6,18 @@ INDEX_URL="https://github.com/${REPOSITORY}/releases/latest/download/release-ind
 
 usage() {
   cat <<'EOF'
-Install CPython, uv, and psutil builds made for native Termux aarch64.
+Install CPython, uv, psutil, and Wrangler builds made for native Termux aarch64.
 
 Usage:
   install.sh 3.14 [--with-uv] [--with-psutil]
   install.sh uv
+  install.sh wrangler
 
 Examples:
   install.sh 3.13
   install.sh 3.14 --with-uv --with-psutil
   install.sh uv
+  install.sh wrangler
 EOF
 }
 
@@ -145,13 +147,19 @@ if [[ "$target" == "uv" ]]; then
   exit 0
 fi
 
+if [[ "$target" == "wrangler" ]]; then
+  install_deb_kind "wrangler" "-"
+  wrangler --version
+  exit 0
+fi
+
 if [[ "$target" =~ ^3\.([0-9]+)$ ]]; then
   target_minor=${BASH_REMATCH[1]}
 else
   target_minor=0
 fi
 if ((10#$target_minor < 9)); then
-  echo "Expected a Python minor version such as 3.10 or 3.14, or 'uv'." >&2
+  echo "Expected a Python minor version such as 3.10 or 3.14, 'uv', or 'wrangler'." >&2
   exit 2
 fi
 

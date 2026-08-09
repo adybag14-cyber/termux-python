@@ -56,6 +56,10 @@ def classify(path: Path) -> tuple[str, str, str] | None:
     if match:
         return "uv", "-", match.group(1)
 
+    match = re.fullmatch(r"wrangler_([^_]+)_aarch64\.deb", name)
+    if match:
+        return "wrangler", "-", match.group(1)
+
     if name.startswith("psutil-") and name.endswith(".whl"):
         minor = wheel_minor(name)
         version_match = re.match(r"psutil-([^-]+)-", name)
