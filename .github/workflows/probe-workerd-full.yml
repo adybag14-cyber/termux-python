@@ -39,6 +39,10 @@ jobs:
           /usr/lib/llvm-19/bin/clang --version
           /usr/lib/llvm-19/bin/ld.lld --version
           /usr/lib/llvm-19/bin/llvm-ar --version
+          libatomic=$(/usr/lib/llvm-19/bin/clang --print-file-name=libatomic.so)
+          test "$libatomic" != libatomic.so
+          test -e "$libatomic"
+          echo "host libatomic: $libatomic"
       - name: Prepare NDK, Bazelisk, and Android target runner
         shell: bash
         run: |
@@ -58,6 +62,11 @@ jobs:
           GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
           sudo install -m 0755 scripts/run_workerd_android_target_tool.sh /usr/local/bin/workerd-android-run-under
           docker pull --platform linux/arm64 termux/termux-docker:aarch64
+          docker run --rm --platform linux/arm64 termux/termux-docker:aarch64 /entrypoint.sh bash -lc '
+            test "$(uname -m)" = aarch64
+            test "$PREFIX" = /data/data/com.termux/files/usr
+            echo qemu-termux-preflight-ok
+          '
       - name: Build workerd from source for Android aarch64
         working-directory: workerd
         shell: bash
@@ -74,6 +83,11 @@ jobs:
           file dist/workerd-android-aarch64
           readelf -h dist/workerd-android-aarch64 | grep -E 'Machine:[[:space:]]+AArch64'
           readelf -l dist/workerd-android-aarch64 | grep -E 'Requesting program interpreter: /system/bin/linker64'
+          if readelf -l dist/workerd-android-aarch64 | grep -E 'ld-linux|ld-musl'; then
+            echo 'non-Android ELF interpreter detected' >&2
+            exit 1
+          fi
+          readelf -d dist/workerd-android-aarch64 | grep -E '\(NEEDED\)' || true
           if readelf -d dist/workerd-android-aarch64 | grep -F 'libc.so.6'; then
             echo 'glibc dependency detected' >&2
             exit 1
