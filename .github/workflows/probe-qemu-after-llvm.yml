@@ -1,5 +1,9 @@
 name: Probe Termux QEMU after LLVM
 on:
+  push:
+    branches: [probe-android-runner]
+    paths:
+      - .github/workflows/probe-qemu-after-llvm.yml
   workflow_dispatch:
 
 jobs:
