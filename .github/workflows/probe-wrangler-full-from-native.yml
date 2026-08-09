@@ -1,6 +1,10 @@
 name: Probe full Wrangler from native workerd artifact
 
 on:
+  push:
+    branches: [probe-android-runner]
+    paths:
+      - probe-native-run.txt
   workflow_dispatch:
     inputs:
       native_run:
@@ -24,10 +28,39 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Resolve native artifact handoff
+        id: native
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "${{ github.event_name }}" == push ]]; then
+            mapfile -t native < probe-native-run.txt
+            native_run=${native[0]:-}
+            native_workerd_version=${native[1]:-}
+          else
+            native_run='${{ inputs.native_run }}'
+            native_workerd_version='${{ inputs.native_workerd_version }}'
+          fi
+          [[ "$native_run" =~ ^[0-9]+$ ]]
+          test -n "$native_workerd_version"
+          printf 'run=%s\nworkerd=%s\n' "$native_run" "$native_workerd_version"
+          echo "run=$native_run" >> "$GITHUB_OUTPUT"
+          echo "workerd=$native_workerd_version" >> "$GITHUB_OUTPUT"
+
       - name: Enable aarch64 containers through QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
+
+      - name: Verify aarch64 Termux emulation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --platform linux/arm64 termux/termux-docker:aarch64 /entrypoint.sh bash -lc '
+            test "$(uname -m)" = aarch64
+            test "$PREFIX" = /data/data/com.termux/files/usr
+            echo qemu-termux-combined-preflight-ok
+          '
 
       - name: Resolve latest Wrangler pins
         id: versions
@@ -40,8 +73,8 @@ jobs:
           esbuild=$(sed -n 's/^  esbuild: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
           node=$(jq -r .volta.node workers-sdk/package.json)
           pnpm=$(jq -r .packageManager workers-sdk/package.json | sed 's/^pnpm@//')
-          test "$workerd" = "${{ inputs.native_workerd_version }}" || {
-            echo "Latest Wrangler $wrangler now pins workerd $workerd, but native run ${{ inputs.native_run }} built ${{ inputs.native_workerd_version }}" >&2
+          test "$workerd" = "${{ steps.native.outputs.workerd }}" || {
+            echo "Latest Wrangler $wrangler now pins workerd $workerd, but native run ${{ steps.native.outputs.run }} built ${{ steps.native.outputs.workerd }}" >&2
             exit 1
           }
           printf 'wrangler=%s\nworkerd=%s\nesbuild=%s\nnode=%s\npnpm=%s\n' "$wrangler" "$workerd" "$esbuild" "$node" "$pnpm"
@@ -57,7 +90,7 @@ jobs:
           name: workerd-android-aarch64
           path: native-workerd
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.native_run }}
+          run-id: ${{ steps.native.outputs.run }}
 
       - name: Verify downloaded workerd ELF
         shell: bash
