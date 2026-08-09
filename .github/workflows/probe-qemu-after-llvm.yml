@@ -1,0 +1,80 @@
+name: Probe Termux QEMU after LLVM
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install LLVM 19 first
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          curl -fsSL --retry 4 --retry-all-errors https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          sed -i '/apt-get install/d' /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19
+          sudo apt-get install -y -qq --no-install-recommends clang-19 lld-19 llvm-19
+          /usr/lib/llvm-19/bin/clang --version | head -n1
+
+      - name: Register arm64 QEMU after apt activity
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Inspect binfmt registration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ls -l /proc/sys/fs/binfmt_misc
+          test -f /proc/sys/fs/binfmt_misc/qemu-aarch64
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64
+          grep -Fx enabled /proc/sys/fs/binfmt_misc/qemu-aarch64
+
+      - name: Test current Termux aarch64 tag
+        id: current
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker pull --platform linux/arm64 termux/termux-docker:aarch64
+          docker image inspect termux/termux-docker:aarch64 --format '{{json .RepoDigests}} {{.Architecture}} {{.Os}}'
+          docker run --rm --platform linux/arm64 termux/termux-docker:aarch64 /entrypoint.sh bash -lc '
+            echo current-uname=$(uname -m)
+            echo current-prefix=$PREFIX
+            test "$(uname -m)" = aarch64
+            test "$PREFIX" = /data/data/com.termux/files/usr
+          '
+
+      - name: Test known-good Aug 8 Termux digest
+        id: old
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image='termux/termux-docker@sha256:ba0d1e457d7d54c8e5067059f8aff66fbebcf20e4478a5a07186bc570e605822'
+          docker pull --platform linux/arm64 "$image"
+          docker image inspect "$image" --format '{{json .RepoDigests}} {{.Architecture}} {{.Os}}'
+          docker run --rm --platform linux/arm64 "$image" /entrypoint.sh bash -lc '
+            echo old-uname=$(uname -m)
+            echo old-prefix=$PREFIX
+            test "$(uname -m)" = aarch64
+            test "$PREFIX" = /data/data/com.termux/files/usr
+          '
+
+      - name: Report result
+        shell: bash
+        env:
+          CURRENT: ${{ steps.current.outcome }}
+          OLD: ${{ steps.old.outcome }}
+        run: |
+          set -Eeuo pipefail
+          echo "current=$CURRENT old=$OLD"
+          test "$OLD" = success
+          if [[ "$CURRENT" = success ]]; then
+            echo qemu-after-llvm-current-ok
+          else
+            echo current-termux-tag-regressed-old-digest-ok
+          fi
