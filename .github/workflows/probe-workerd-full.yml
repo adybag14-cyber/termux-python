@@ -7,10 +7,6 @@ jobs:
     timeout-minutes: 330
     steps:
       - uses: actions/checkout@v7
-      - name: Enable aarch64 containers through QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
       - name: Clone and patch exact workerd
         shell: bash
         run: |
@@ -43,6 +39,10 @@ jobs:
           test "$libatomic" != libatomic.so
           test -e "$libatomic"
           echo "host libatomic: $libatomic"
+      - name: Enable aarch64 containers through QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - name: Prepare NDK, Bazelisk, and Android target runner
         shell: bash
         run: |
