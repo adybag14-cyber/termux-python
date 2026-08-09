@@ -1,29 +1,37 @@
-name: Probe Clang 19 V8 consteval
+name: Probe Clang 19 V8 host toolchain
 
-on:`n  workflow_dispatch:`njobs:
+on:
+  push:
+    branches: [probe-android-runner]
+    paths:
+      - .github/workflows/probe-clang19-v8.yml
+  workflow_dispatch:
+
+jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
-      - name: Reproduce V8 immediate-function pattern with stock Clang
+      - name: Reproduce V8 immediate-function pattern
         shell: bash
         run: |
           set -Eeuo pipefail
-          /usr/bin/clang --version
           /usr/bin/clang++ --version
-          cat > /tmp/v8-immediate.cc <<'CPP'
+          cat >/tmp/v8-immediate.cc <<'CPP'
           #include <cstdint>
           #include <tuple>
           #include <utility>
 
           enum class Bytecode : uint8_t { kBreak, kPush };
-
           template <Bytecode bc>
           struct BytecodeOperands {
             enum class Operand : uint8_t { kValue };
-            static consteval int Type(Operand op) { return static_cast<int>(op); }
+            static consteval int Index(Operand op) { return static_cast<uint8_t>(op); }
+            static consteval int Size(Operand op) { return Index(op) + 1; }
+            static consteval int Offset(Operand op) { return Index(op); }
+            static consteval int Type(Operand op) { return Index(op); }
             static consteval auto GetOperandsTuple() {
               return std::tuple(std::integral_constant<Operand, Operand::kValue>{});
             }
@@ -48,7 +56,7 @@ on:`n  workflow_dispatch:`njobs:
             DispatchOnBytecode(bytecode, [&]<Bytecode bc>() {
               BytecodeOperands<bc>::ForEachOperand([&]<auto op>() {
                 constexpr int type = BytecodeOperands<bc>::Type(op);
-                result += type + 1;
+                result += type + BytecodeOperands<bc>::Size(op);
               });
             });
             return result;
@@ -64,70 +72,50 @@ on:`n  workflow_dispatch:`njobs:
           set -e
           echo "stock_rc=$stock_rc"
           cat /tmp/stock.err
-          if [[ $stock_rc -eq 0 ]]; then /tmp/v8-immediate-stock; fi
-          echo "stock_rc=$stock_rc" >> "$GITHUB_ENV"
+          test "$stock_rc" -ne 0
+          grep -E 'immediate function|not a constant expression' /tmp/stock.err
 
-      - name: Install official workerd LLVM 19 toolchain
+      - name: Install upstream workerd LLVM 19 toolchain
         shell: bash
         run: |
           set -Eeuo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          cd /tmp
-          wget -q https://apt.llvm.org/llvm.sh
-          sed -i '/apt-get install/d' llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 19
+          curl -fsSL --retry 4 --retry-all-errors https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          sed -i '/apt-get install/d' /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19
           sudo apt-get install -y -qq --no-install-recommends \
             clang-19 lld-19 libunwind-19 libc++abi1-19 libc++1-19 \
             libc++-19-dev libclang-rt-19-dev llvm-19
-          /usr/lib/llvm-19/bin/clang --version
           /usr/lib/llvm-19/bin/clang++ --version
-
-      - name: Compile same pattern with Clang 19
-        shell: bash
-        run: |
-          set -Eeuo pipefail
           /usr/lib/llvm-19/bin/clang++ -std=c++23 -Wall -Wextra -Werror \
             /tmp/v8-immediate.cc -o /tmp/v8-immediate-19
           /tmp/v8-immediate-19
-          echo "stock result: $stock_rc"
           echo clang19-v8-immediate-ok
-      - name: Diagnose Bazel host and Android compiler selection
+
+      - name: Prove Bazel host V8 action selects LLVM 19
         shell: bash
         run: |
           set -Eeuo pipefail
-          rm -rf /tmp/workerd-aquery
           git clone --filter=blob:none --depth=1 --branch v1.20260801.1 \
             https://github.com/cloudflare/workerd.git /tmp/workerd-aquery
           python3 scripts/patch_workerd_android.py /tmp/workerd-aquery
+          grep -Fx 'build:android --repo_env=CC=/usr/lib/llvm-19/bin/clang' /tmp/workerd-aquery/.bazelrc
+          grep -Fx 'build:android --repo_env=AR=/usr/lib/llvm-19/bin/llvm-ar' /tmp/workerd-aquery/.bazelrc
+          grep -Fx 'build:android --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld' /tmp/workerd-aquery/.bazelrc
           test -d "$ANDROID_NDK_LATEST_HOME"
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           GOBIN="$HOME/.local/bin" go install github.com/bazelbuild/bazelisk@latest
           cd /tmp/workerd-aquery
-          common=(
-            --enable_platform_specific_config=false
-            --config=release_android
-            --platforms=//:android_arm64
-          )
           "$HOME/.local/bin/bazelisk" aquery \
             'inputs(".*regexp-bytecodes.cc", deps(//src/workerd/server:workerd))' \
-            "${common[@]}" --output=textproto --include_commandline > /tmp/regexp-aquery.textproto
-          "$HOME/.local/bin/bazelisk" aquery \
-            'inputs(".*src/workerd/server/workerd.c\\+\\+", deps(//src/workerd/server:workerd))' \
-            "${common[@]}" --output=textproto --include_commandline > /tmp/target-aquery.textproto
-          echo '=== regexp action command/toolchain evidence ==='
-          grep -n -E 'regexp-bytecodes|arguments:|llvm-19|/usr/bin/clang|cc_wrapper|compiler|execution_platform' \
-            /tmp/regexp-aquery.textproto | head -160 || true
-          echo '=== Android target action command/toolchain evidence ==='
-          grep -n -E 'workerd.c\\+\\+|arguments:|aarch64-linux-android|android-ndk|ndk/|llvm-19|clang|execution_platform' \
-            /tmp/target-aquery.textproto | head -200 || true
-          output_base=$("$HOME/.local/bin/bazelisk" info "${common[@]}" output_base)
-          echo "output_base=$output_base"
-          echo '=== generated host toolchain references ==='
-          grep -R -n -E '/usr/lib/llvm-19/bin/clang|/usr/bin/clang|llvm-19/bin/llvm-ar|cc_wrapper' \
-            "$output_base/external" 2>/dev/null | head -220 || true
-          echo '=== local_config_cc-like files ==='
-          find "$output_base/external" -maxdepth 4 \
-            \( -path '*local_config_cc*' -o -path '*local_config_cc_toolchains*' \) \
-            -type f -print | head -120 || true
-          echo clang-toolchain-diagnostic-complete
+            --enable_platform_specific_config=false \
+            --config=release_android \
+            --platforms=//:android_arm64 \
+            --output=textproto --include_commandline > /tmp/regexp-aquery.textproto
+          grep -F '/usr/lib/llvm-19/bin/clang' /tmp/regexp-aquery.textproto
+          if grep -F '/usr/bin/clang' /tmp/regexp-aquery.textproto; then
+            echo 'stock clang leaked into regexp host action' >&2
+            exit 1
+          fi
+          echo clang19-bazel-host-action-ok

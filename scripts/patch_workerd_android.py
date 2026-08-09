@@ -355,6 +355,55 @@ selects.config_setting_group(
             f'    "{v8_shuffle_patch_name}",\n    "{v8_dead_context_patch_name}",\n]',
         )
 
+    # Clang 18 applies C++23 immediate-function escalation to V8's runtime
+    # regexp dispatch lambdas when they call consteval operand accessors. The
+    # accessors are still compile-time evaluable as constexpr, but no longer
+    # force their enclosing runtime lambdas to become immediate functions.
+    v8_regexp_constexpr_patch_name = "0047-Relax-regexp-operand-accessors-for-Clang-18.patch"
+    v8_regexp_constexpr_patch = tree / "patches" / "v8" / v8_regexp_constexpr_patch_name
+    v8_regexp_constexpr_patch.write_text(
+        "\n".join([
+            "diff --git a/src/regexp/regexp-bytecodes-inl.h b/src/regexp/regexp-bytecodes-inl.h",
+            "--- a/src/regexp/regexp-bytecodes-inl.h",
+            "+++ b/src/regexp/regexp-bytecodes-inl.h",
+            "@@ -178,11 +178,11 @@ class BytecodeOperandsBase {",
+            "   static constexpr int kTotalSize = Traits::kSize;",
+            "-  static consteval int Index(Operand op) { return static_cast<uint8_t>(op); }",
+            "-  static consteval int Size(Operand op) {",
+            "+  static constexpr int Index(Operand op) { return static_cast<uint8_t>(op); }",
+            "+  static constexpr int Size(Operand op) {",
+            "     return Traits::kOperandSizes[Index(op)];",
+            "   }",
+            "-  static consteval int Offset(Operand op) {",
+            "+  static constexpr int Offset(Operand op) {",
+            "     return Traits::kOperandOffsets[Index(op)];",
+            "   }",
+            "-  static consteval BytecodeOperandType Type(Operand op) {",
+            "+  static constexpr BytecodeOperandType Type(Operand op) {",
+            "     return Traits::kOperandTypes[Index(op)];",
+            "   }",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    v8_text = v8_module.read_text(encoding="utf-8")
+    stale_regexp_patch_name = "0047-Relax-regexp-consteval-for-Clang-18.patch"
+    if stale_regexp_patch_name in v8_text:
+        v8_module.write_text(
+            v8_text.replace(f'    "{stale_regexp_patch_name}",\n', ""),
+            encoding="utf-8",
+        )
+        stale_patch = tree / "patches" / "v8" / stale_regexp_patch_name
+        if stale_patch.exists():
+            stale_patch.unlink()
+        v8_text = v8_module.read_text(encoding="utf-8")
+    if v8_regexp_constexpr_patch_name not in v8_text:
+        replace_once(
+            v8_module,
+            f'    "{v8_dead_context_patch_name}",\n]',
+            f'    "{v8_dead_context_patch_name}",\n    "{v8_regexp_constexpr_patch_name}",\n]',
+        )
+
     # Older iterations of this port moved gen-compile-cache to exec
     # configuration. Restore upstream's target configuration: workerd exposes
     # target_run_under specifically so cross-built tools can execute without
