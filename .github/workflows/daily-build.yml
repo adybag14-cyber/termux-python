@@ -445,7 +445,11 @@ jobs:
             fi
           done
           sha256sum native/workerd native/esbuild
-          rm -rf workerd "$HOME/.cache/bazel"
+          rm -rf workerd
+          # Bazel target tools run through the Termux/QEMU wrapper and can leave
+          # cache entries owned by a different uid. Cache reclamation must not
+          # turn an already-verified Android artifact into a failed release gate.
+          sudo rm -rf "$HOME/.cache/bazel" || true
           df -h .
 
       - name: Assemble Wrangler Termux package

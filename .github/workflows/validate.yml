@@ -47,6 +47,57 @@ jobs:
           PY
           bash -n /tmp/generated-build.sh
 
+      - name: Reject obsolete Python downstream patches
+        run: |
+          python3 - <<'PY'
+          import io
+          import tarfile
+          import tempfile
+          from pathlib import Path
+          from scripts.prepare_python_recipe import remove_obsolete_source_patches
+
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td)
+              recipe = root / "packages" / "python"
+              recipe.mkdir(parents=True)
+              patch = recipe / "0008-fix-pkgconfig-variable-substitution.patch"
+              patch.write_text("historical downstream patch\n", encoding="utf-8")
+
+              module_patch = recipe / "0011-fix-module-linking.patch"
+              module_patch.write_text("historical module-link patch\n", encoding="utf-8")
+              archive = io.BytesIO()
+              with tarfile.open(fileobj=archive, mode="w:xz") as tar:
+                  members = {
+                      "Python-3.13.15/configure": b'LIBPYTHON="-lpython${VERSION}${ABIFLAGS}"\n',
+                      "Python-3.13.15/Modules/makesetup": b'$(MODULE_LDFLAGS_SHARED)\n',
+                  }
+                  for name, data in members.items():
+                      info = tarfile.TarInfo(name)
+                      info.size = len(data)
+                      tar.addfile(info, io.BytesIO(data))
+              removed = remove_obsolete_source_patches(root, archive.getvalue(), "3.13.15")
+              assert removed == [patch.name, module_patch.name]
+              assert not patch.exists()
+              assert not module_patch.exists()
+
+              patch.write_text("still needed\n", encoding="utf-8")
+              module_patch.write_text("still needed\n", encoding="utf-8")
+              archive = io.BytesIO()
+              with tarfile.open(fileobj=archive, mode="w:xz") as tar:
+                  members = {
+                      "Python-3.13.13/configure": b'LIBPYTHON="$(BLDLIBRARY)"\n',
+                      "Python-3.13.13/Modules/makesetup": b'$(LIBPYTHON)\n',
+                  }
+                  for name, data in members.items():
+                      info = tarfile.TarInfo(name)
+                      info.size = len(data)
+                      tar.addfile(info, io.BytesIO(data))
+              removed = remove_obsolete_source_patches(root, archive.getvalue(), "3.13.13")
+              assert removed == []
+              assert patch.exists()
+              assert module_patch.exists()
+          PY
+
       - name: Exercise release index generation
         run: |
           rm -rf /tmp/assets /tmp/index
