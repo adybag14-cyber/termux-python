@@ -570,7 +570,7 @@ jobs:
 
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           mapfile -t assets < <(find dist -maxdepth 1 -type f \
