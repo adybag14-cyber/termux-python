@@ -74,6 +74,42 @@ def prepare_current_build_system(tree: Path, minor: str) -> None:
         (tree / "packages" / "python" / filename).unlink(missing_ok=True)
 
 
+def remove_obsolete_source_patches(tree: Path, source: bytes, version: str) -> list[str]:
+    """Drop historical downstream patches already superseded by the CPython source."""
+    source_root = f"Python-{version}/"
+    with tarfile.open(fileobj=io.BytesIO(source), mode="r:xz") as tar:
+        def read_member(relative: str) -> str:
+            member = tar.getmember(source_root + relative)
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise RuntimeError(f"Could not read {member.name} from CPython source archive")
+            return extracted.read().decode("utf-8")
+
+        configure = read_member("configure")
+        makesetup = read_member("Modules/makesetup")
+
+    recipe = tree / "packages" / "python"
+    removed: list[str] = []
+
+    # GH-138800 was carried by Termux before it landed upstream. New CPython
+    # patch releases already contain the fix, so applying the historical patch
+    # again aborts with a reversed/already-applied patch error.
+    if 'LIBPYTHON="-lpython${VERSION}${ABIFLAGS}"' in configure:
+        for patch in sorted(recipe.glob("*-fix-pkgconfig-variable-substitution.patch")):
+            patch.unlink()
+            removed.append(patch.name)
+
+    # Newer CPython routes extension-module linkage through MODULE_LDFLAGS_SHARED;
+    # Makefile.pre.in expands that to BLDLIBRARY when LIBPYTHON is present. That
+    # supersedes Termux's older direct LIBPYTHON -> BLDLIBRARY makesetup patch.
+    if "$(MODULE_LDFLAGS_SHARED)" in makesetup:
+        for patch in sorted(recipe.glob("*-fix-module-linking.patch")):
+            patch.unlink()
+            removed.append(patch.name)
+
+    return removed
+
+
 def replace_version(build_sh: str, version: str) -> str:
     updated, count = re.subn(
         r"^TERMUX_PKG_VERSION=.*$",
@@ -194,6 +230,9 @@ def main() -> int:
     source_url = f"https://www.python.org/ftp/python/{args.version}/Python-{args.version}.tar.xz"
     source = fetch_bytes(source_url)
     checksum = hashlib.sha256(source).hexdigest()
+    removed_patches = remove_obsolete_source_patches(args.tree, source, args.version)
+    for patch in removed_patches:
+        print(f"Removed obsolete source patch already present in CPython {args.version}: {patch}")
 
     recipe_path = args.tree / "packages" / "python" / "build.sh"
     build_sh = recipe_path.read_text(encoding="utf-8")
