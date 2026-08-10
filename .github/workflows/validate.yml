@@ -56,46 +56,73 @@ jobs:
           from pathlib import Path
           from scripts.prepare_python_recipe import remove_obsolete_source_patches
 
+          def make_archive(version, configure, makesetup):
+              archive = io.BytesIO()
+              with tarfile.open(fileobj=archive, mode="w:xz") as tar:
+                  members = {
+                      f"Python-{version}/configure": configure,
+                      f"Python-{version}/Modules/makesetup": makesetup,
+                  }
+                  for name, data in members.items():
+                      info = tarfile.TarInfo(name)
+                      info.size = len(data)
+                      tar.addfile(info, io.BytesIO(data))
+              return archive.getvalue()
+
           with tempfile.TemporaryDirectory() as td:
               root = Path(td)
               recipe = root / "packages" / "python"
               recipe.mkdir(parents=True)
               patch = recipe / "0008-fix-pkgconfig-variable-substitution.patch"
-              patch.write_text("historical downstream patch\n", encoding="utf-8")
-
               module_patch = recipe / "0011-fix-module-linking.patch"
-              module_patch.write_text("historical module-link patch\n", encoding="utf-8")
-              archive = io.BytesIO()
-              with tarfile.open(fileobj=archive, mode="w:xz") as tar:
-                  members = {
-                      "Python-3.13.15/configure": b'LIBPYTHON="-lpython${VERSION}${ABIFLAGS}"\n',
-                      "Python-3.13.15/Modules/makesetup": b'$(MODULE_LDFLAGS_SHARED)\n',
-                  }
-                  for name, data in members.items():
-                      info = tarfile.TarInfo(name)
-                      info.size = len(data)
-                      tar.addfile(info, io.BytesIO(data))
-              removed = remove_obsolete_source_patches(root, archive.getvalue(), "3.13.15")
+
+              def restore_patches():
+                  patch.write_text("historical downstream patch\n", encoding="utf-8")
+                  module_patch.write_text("historical module-link patch\n", encoding="utf-8")
+
+              restore_patches()
+              archive = make_archive(
+                  "3.13.15",
+                  b'LIBPYTHON="-lpython${VERSION}${ABIFLAGS}"\n',
+                  b'$(MODULE_LDFLAGS_SHARED)\n',
+              )
+              removed = remove_obsolete_source_patches(root, archive, "3.13.15")
               assert removed == [patch.name, module_patch.name]
               assert not patch.exists()
               assert not module_patch.exists()
 
-              patch.write_text("still needed\n", encoding="utf-8")
-              module_patch.write_text("still needed\n", encoding="utf-8")
-              archive = io.BytesIO()
-              with tarfile.open(fileobj=archive, mode="w:xz") as tar:
-                  members = {
-                      "Python-3.13.13/configure": b'LIBPYTHON="$(BLDLIBRARY)"\n',
-                      "Python-3.13.13/Modules/makesetup": b'$(LIBPYTHON)\n',
-                  }
-                  for name, data in members.items():
-                      info = tarfile.TarInfo(name)
-                      info.size = len(data)
-                      tar.addfile(info, io.BytesIO(data))
-              removed = remove_obsolete_source_patches(root, archive.getvalue(), "3.13.13")
+              restore_patches()
+              archive = make_archive(
+                  "3.13.13",
+                  b'LIBPYTHON="$(BLDLIBRARY)"\n',
+                  b'$(LIBPYTHON)\n',
+              )
+              removed = remove_obsolete_source_patches(root, archive, "3.13.13")
               assert removed == []
               assert patch.exists()
               assert module_patch.exists()
+
+              restore_patches()
+              archive = make_archive(
+                  "3.13.15",
+                  b'LIBPYTHON="-lpython${VERSION}${ABIFLAGS}"\n',
+                  b'$(LIBPYTHON)\n',
+              )
+              removed = remove_obsolete_source_patches(root, archive, "3.13.15")
+              assert removed == [patch.name]
+              assert not patch.exists()
+              assert module_patch.exists()
+
+              restore_patches()
+              archive = make_archive(
+                  "3.13.15",
+                  b'LIBPYTHON="$(BLDLIBRARY)"\n',
+                  b'$(MODULE_LDFLAGS_SHARED)\n',
+              )
+              removed = remove_obsolete_source_patches(root, archive, "3.13.15")
+              assert removed == [module_patch.name]
+              assert patch.exists()
+              assert not module_patch.exists()
           PY
 
       - name: Exercise release index generation
