@@ -49,10 +49,12 @@ jobs:
 
       - name: Exercise release index generation
         run: |
+          rm -rf /tmp/assets /tmp/index
           mkdir -p /tmp/assets /tmp/index
           : > /tmp/assets/python_3.14.6-1_aarch64.deb
           : > /tmp/assets/python-ensurepip-wheels_3.14.6-1_all.deb
           : > /tmp/assets/uv_0.11.29_aarch64.deb
+          : > /tmp/assets/wrangler_4.120.0_aarch64.deb
           : > /tmp/assets/psutil-7.2.2-314-cp36-abi3-android_24_arm64_v8a.whl
           python3 scripts/generate_release_index.py \
             --repo example/example \
@@ -62,7 +64,121 @@ jobs:
           grep -q $'python\t3.14' /tmp/index/release-index.tsv
           grep -q $'ensurepip\t3.14' /tmp/index/release-index.tsv
           grep -q $'psutil\t3.14' /tmp/index/release-index.tsv
+          grep -q $'wrangler\t-\t4.120.0' /tmp/index/release-index.tsv
           grep -q 'psutil-7.2.2-314-cp36-abi3-android_24_arm64_v8a.whl' /tmp/index/release-index.tsv
+
+      - name: Exercise Wrangler package assembly
+        run: |
+          set -Eeuo pipefail
+          root=/tmp/wrangler-deploy
+          rm -rf "$root" /tmp/wrangler-package /tmp/wrangler-extract
+          mkdir -p "$root/bin" \
+            "$root/node_modules/.pnpm/node_modules" \
+            "$root/node_modules/.pnpm/workerd@1.20260801.1/node_modules/workerd/lib" \
+            /tmp/wrangler-source-self /tmp/wrangler-native
+          printf '{"name":"wrangler","version":"4.120.0"}\n' > "$root/package.json"
+          printf '{"name":"wrangler","version":"4.120.0"}\n' > /tmp/wrangler-source-self/package.json
+          printf '#!/usr/bin/env node\n' > "$root/bin/wrangler.js"
+          printf '#!/usr/bin/env node\n' > "$root/bin/cf-wrangler.js"
+          ln -s /tmp/wrangler-source-self "$root/node_modules/.pnpm/node_modules/wrangler"
+          ln -s "$root/node_modules/.pnpm/workerd@1.20260801.1/node_modules/workerd" \
+            "$root/node_modules/workerd"
+          mkdir -p "$root/node_modules/.pnpm/node_modules/.bin"
+          cat > "$root/node_modules/.pnpm/node_modules/.bin/test-tool" <<EOF
+          #!/bin/sh
+          export NODE_PATH="$root/node_modules/.pnpm/node_modules"
+          exec node --version
+          EOF
+          printf '@SET "NODE_PATH=C:\\temp\\bad"\r\n' > \
+            "$root/node_modules/.pnpm/node_modules/.bin/test-tool.CMD"
+          printf '$env:NODE_PATH="C:\\temp\\bad"\r\n' > \
+            "$root/node_modules/.pnpm/node_modules/.bin/test-tool.ps1"
+          chmod +x "$root/node_modules/.pnpm/node_modules/.bin/test-tool"
+          mkdir -p "$root/node_modules/example-bin"
+          printf '#!/usr/bin/env node\r\nconsole.log("ok")\r\n' > "$root/node_modules/example-bin/cli.js"
+          chmod +x "$root/node_modules/example-bin/cli.js"
+          mkdir -p "$root/node_modules/term-size/vendor/windows"
+          printf 'MZforeign-helper' > "$root/node_modules/term-size/vendor/windows/term-size.exe"
+          cat > "$root/node_modules/.pnpm/workerd@1.20260801.1/node_modules/workerd/lib/main.js" <<'JS'
+          function generateBinPath() {
+            const { pkg, subpath } = pkgAndSubpathForCurrentPlatform();
+          }
+          JS
+          printf '#!/data/data/com.termux/files/usr/bin/sh\necho workerd test\n' > /tmp/wrangler-native/workerd
+          printf '#!/data/data/com.termux/files/usr/bin/sh\necho 0.28.1\n' > /tmp/wrangler-native/esbuild
+          chmod +x /tmp/wrangler-native/workerd /tmp/wrangler-native/esbuild
+          python3 scripts/package_wrangler_android.py \
+            --deploy "$root" \
+            --workerd-binary /tmp/wrangler-native/workerd \
+            --esbuild-binary /tmp/wrangler-native/esbuild \
+            --wrangler-version 4.120.0 \
+            --workerd-version 1.20260801.1 \
+            --esbuild-version 0.28.1 \
+            --output-dir /tmp/wrangler-package
+          deb=/tmp/wrangler-package/wrangler_4.120.0_aarch64.deb
+          test "$(dpkg-deb -f "$deb" Package)" = wrangler
+          test "$(dpkg-deb -f "$deb" Version)" = 4.120.0
+          test "$(dpkg-deb -f "$deb" Architecture)" = aarch64
+          dpkg-deb -x "$deb" /tmp/wrangler-extract
+          metadata=/tmp/wrangler-extract/data/data/com.termux/files/usr/share/doc/wrangler/BUILD-METADATA.txt
+          grep -E '^workerd SHA-256: [0-9a-f]{64}$' "$metadata"
+          grep -E '^esbuild SHA-256: [0-9a-f]{64}$' "$metadata"
+          workerd_main=/tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/node_modules/workerd/lib/main.js
+          grep -F 'process.platform === "android" && process.arch === "arm64"' "$workerd_main"
+          grep -F 'return { binPath: process.env.WORKERD_BINARY_PATH };' "$workerd_main"
+          workerd_link=/tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/node_modules/workerd
+          self_link=/tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/node_modules/.pnpm/node_modules/wrangler
+          test -L "$workerd_link"
+          case "$(readlink "$workerd_link")" in
+            /*) echo "workerd link remained absolute" >&2; exit 1 ;;
+          esac
+          test "$(readlink "$self_link")" = ../../..
+          shim=/tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/node_modules/.pnpm/node_modules/.bin/test-tool
+          grep -F '/data/data/com.termux/files/usr/lib/wrangler/node_modules/.pnpm/node_modules' "$shim"
+          test "$(head -n1 "$shim")" = '#!/data/data/com.termux/files/usr/bin/sh'
+          node_script=/tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/node_modules/example-bin/cli.js
+          test "$(head -n1 "$node_script")" = '#!/data/data/com.termux/files/usr/bin/node'
+          ! grep -F '/tmp/wrangler-deploy' "$shim"
+          test ! -e "$shim.CMD"
+          test ! -e "$shim.ps1"
+          test ! -e /tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/node_modules/term-size/vendor/windows/term-size.exe
+          launcher=/tmp/wrangler-extract/data/data/com.termux/files/usr/bin/wrangler
+          grep -F 'exec "$PREFIX/bin/node" "$WRANGLER_HOME/bin/wrangler.js" "$@"' "$launcher"
+          wrangler2=/tmp/wrangler-extract/data/data/com.termux/files/usr/bin/wrangler2
+          test -L "$wrangler2"
+          test "$(readlink "$wrangler2")" = wrangler
+          cf_launcher=/tmp/wrangler-extract/data/data/com.termux/files/usr/bin/cf-wrangler
+          test ! -L "$cf_launcher"
+          grep -F 'exec "$PREFIX/bin/node" "$WRANGLER_HOME/bin/cf-wrangler.js" "$@"' "$cf_launcher"
+          ! grep -r -n -E '^#!(/bin|/usr/bin)' \
+            /tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler
+          test -x /tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/native/workerd
+          test -x /tmp/wrangler-extract/data/data/com.termux/files/usr/lib/wrangler/native/esbuild
+
+          # The package contract excludes every npm-distributed native platform
+          # payload; the only native binaries shipped are our source-built copies.
+          for forbidden_name in \
+            '@img/sharp-wasm32' \
+            '@esbuild/android-arm64' \
+            '@cloudflare/workerd-linux-arm64'; do
+            forbidden_dir="$root/node_modules/forbidden-native"
+            mkdir -p "$forbidden_dir"
+            printf '{"name":"%s","version":"0.0.0-test"}\n' "$forbidden_name" > \
+              "$forbidden_dir/package.json"
+            rm -rf /tmp/wrangler-forbidden-package
+            if python3 scripts/package_wrangler_android.py \
+              --deploy "$root" \
+              --workerd-binary /tmp/wrangler-native/workerd \
+              --esbuild-binary /tmp/wrangler-native/esbuild \
+              --wrangler-version 4.120.0 \
+              --workerd-version 1.20260801.1 \
+              --esbuild-version 0.28.1 \
+              --output-dir /tmp/wrangler-forbidden-package; then
+              echo "Native npm platform package was unexpectedly accepted: $forbidden_name" >&2
+              exit 1
+            fi
+            rm -rf "$forbidden_dir" /tmp/wrangler-forbidden-package
+          done
 
       - name: Parse workflow YAML
         run: |
