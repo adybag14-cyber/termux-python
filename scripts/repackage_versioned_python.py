@@ -38,7 +38,7 @@ GENERIC_PATHS = (
     "share/man/man1/python.1.gz",
     "share/man/man1/python3.1.gz",
 )
-DROP_CONTROL_FIELDS = {"Breaks", "Conflicts", "Provides", "Replaces", "Suggests"}
+DROP_CONTROL_FIELDS = {"Breaks", "Conflicts", "Provides", "Recommends", "Replaces", "Suggests"}
 
 
 def run(*args: str) -> None:

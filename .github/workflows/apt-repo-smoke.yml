@@ -35,17 +35,19 @@ jobs:
             /entrypoint.sh bash -lc '
               set -Eeuo pipefail
               pkg update -y
+              bash /workspace/scripts/setup_apt_repo.sh
+              ! dpkg-query -W python >/dev/null 2>&1
+              pkg install -y python3.13
+              ! dpkg-query -W python >/dev/null 2>&1
+              python3.13 --version | grep -F "Python 3.13."
+              python3.13 -m pip --version
+              pip3.13 --version
+
               pkg install -y python
               generic_before="$(python --version 2>&1)"
               generic_path_before="$(readlink -f "$PREFIX/bin/python")"
               generic_sha_before="$(sha256sum "$generic_path_before" | awk "{print \$1}")"
-
-              bash /workspace/scripts/setup_apt_repo.sh
-              pkg install -y python3.13 uv wrangler
-
-              python3.13 --version | grep -F "Python 3.13."
-              python3.13 -m pip --version
-              pip3.13 --version
+              pkg install -y uv wrangler
               uv --version
               uvx --version
               wrangler --version
