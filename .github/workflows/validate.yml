@@ -316,6 +316,28 @@ jobs:
             rm -rf "$forbidden_dir" /tmp/wrangler-forbidden-package
           done
 
+      - name: Exercise workerd project-include drift guard
+        run: |
+          python3 - <<'PY'
+          import tempfile
+          from pathlib import Path
+          from scripts.patch_workerd_android import ensure_quoted_project_include
+
+          with tempfile.TemporaryDirectory() as td:
+              source = Path(td) / "modules-new.c++"
+              source.write_text('#include <simdutf.h>\n', encoding='utf-8')
+              ensure_quoted_project_include(source, 'simdutf.h')
+              assert source.read_text(encoding='utf-8') == '#include "simdutf.h"\n'
+              ensure_quoted_project_include(source, 'simdutf.h')  # idempotent
+
+              source.write_text('#include <other.h>\n', encoding='utf-8')
+              try:
+                  ensure_quoted_project_include(source, 'simdutf.h')
+              except RuntimeError:
+                  pass
+              else:
+                  raise AssertionError('unknown upstream include drift must fail closed')
+          PY
       - name: Parse workflow YAML
         run: |
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f, aliases: true) }'

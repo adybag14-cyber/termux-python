@@ -13,6 +13,17 @@ def replace_once(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def ensure_quoted_project_include(path: Path, header: str) -> None:
+    """Normalize a project header to quote-include form, idempotently."""
+    text = path.read_text(encoding="utf-8")
+    angled = f"#include <{header}>\n"
+    quoted = f'#include "{header}"\n'
+    if quoted in text:
+        return
+    if angled not in text:
+        raise RuntimeError(f"Expected include for {header!r} not found in {path}")
+    path.write_text(text.replace(angled, quoted, 1), encoding="utf-8")
+
 def append_bazel_string_list_item(path: Path, variable: str, item: str) -> None:
     """Append one quoted item to a simple top-level Bazel string list.
 
@@ -199,6 +210,14 @@ selects.config_setting_group(
             '    patches = ["//:patches/capnp/0001-android-bionic-port.patch"],\n',
         )
 
+    # workerd 1.20260811.1 introduced modules-new.c++ with simdutf as an
+    # angle-bracket include.  The @simdutf Bazel target exposes this project
+    # header through the normal quote-include path; Clang rejects the angled
+    # form in the Android cross-build even though sibling JSG sources already
+    # use the quoted form.  Keep this idempotent for older/newer workerd tags.
+    ensure_quoted_project_include(
+        tree / "src" / "workerd" / "jsg" / "modules-new.c++", "simdutf.h"
+    )
     # V8's Android stack trace source uses an angle-bracket include for a V8
     # project header. In the Bazel Android target that header is available as a
     # project-relative include, not as a system include.
