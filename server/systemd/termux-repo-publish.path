@@ -1,0 +1,9 @@
+[Unit]
+Description=Publish verified Termux APT packages when staged
+
+[Path]
+PathExistsGlob=/srv/termux-repo/incoming/*.deb
+Unit=termux-repo-publish.service
+
+[Install]
+WantedBy=multi-user.target

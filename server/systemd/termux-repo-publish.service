@@ -1,0 +1,15 @@
+[Unit]
+Description=Atomically sign and publish staged Termux APT packages
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/publish-termux-repo
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/termux-repo /var/lib/termux-repo /run/lock
+LockPersonality=true

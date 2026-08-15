@@ -1,0 +1,14 @@
+[Unit]
+Description=Sync verified GitHub release packages into signed Termux APT repo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=termuxrepo
+Group=termuxrepo
+ExecStart=/usr/local/bin/sync-termux-repo
+PrivateTmp=true
+ProtectHome=true
+LockPersonality=true
+MemoryDenyWriteExecute=true

@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll GitHub releases for signed Termux APT packages
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+RandomizedDelaySec=90s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
