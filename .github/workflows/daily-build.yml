@@ -104,6 +104,15 @@ jobs:
             cp "$ensurepip_deb" dist/
           fi
 
+          versioned_args=(
+            --python-deb "$deb"
+            --output-dir dist
+          )
+          if [[ -n "$ensurepip_deb" ]]; then
+            versioned_args+=(--ensurepip-deb "$ensurepip_deb")
+          fi
+          python3 scripts/repackage_versioned_python.py "${versioned_args[@]}"
+
           cp "python-${{ matrix.minor }}-metadata.json" dist/
           echo "deb=$(basename "$deb")" >> "$GITHUB_OUTPUT"
 

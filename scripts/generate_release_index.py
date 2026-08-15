@@ -45,12 +45,23 @@ def classify(path: Path) -> tuple[str, str, str] | None:
     if match:
         return "python", f"{match.group(2)}.{match.group(3)}", match.group(1)
 
+    match = re.fullmatch(r"python(\d+\.\d+)_((\d+)\.(\d+)\.\d+[^_]*)_aarch64\.deb", name)
+    if match:
+        return "python-apt", match.group(1), match.group(2)
+
     match = re.fullmatch(
         r"python-ensurepip-wheels_((\d+)\.(\d+)\.\d+[^_]*)_(?:all|aarch64)\.deb",
         name,
     )
     if match:
         return "ensurepip", f"{match.group(2)}.{match.group(3)}", match.group(1)
+
+    match = re.fullmatch(
+        r"python(\d+\.\d+)-ensurepip-wheels_((\d+)\.(\d+)\.\d+[^_]*)_(?:all|aarch64)\.deb",
+        name,
+    )
+    if match:
+        return "ensurepip-apt", match.group(1), match.group(2)
 
     match = re.fullmatch(r"uv_([^_]+)_aarch64\.deb", name)
     if match:

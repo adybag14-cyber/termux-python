@@ -1,0 +1,64 @@
+name: Signed APT repository smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-termux-apt-smoke
+  cancel-in-progress: true
+
+jobs:
+  native-termux:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      TERMUX_IMAGE: termux/termux-docker@sha256:3aed9c7fbcf9195a9919deaad418da006232864a779fb4f322d68a34887a2e15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify pinned Termux ARM environment
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = aarch64
+          docker pull "$TERMUX_IMAGE"
+          test "$(docker image inspect --format '{{.Architecture}}' "$TERMUX_IMAGE")" = arm64
+      - name: Install from signed APT repository in native aarch64 Termux
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            "$TERMUX_IMAGE" \
+            /entrypoint.sh bash -lc '
+              set -Eeuo pipefail
+              pkg update -y
+              pkg install -y python
+              generic_before="$(python --version 2>&1)"
+              generic_path_before="$(readlink -f "$PREFIX/bin/python")"
+              generic_sha_before="$(sha256sum "$generic_path_before" | awk "{print \$1}")"
+
+              bash /workspace/scripts/setup_apt_repo.sh
+              pkg install -y python3.13 uv wrangler
+
+              python3.13 --version | grep -F "Python 3.13."
+              python3.13 -m pip --version
+              pip3.13 --version
+              uv --version
+              uvx --version
+              wrangler --version
+
+              test "$(python --version 2>&1)" = "$generic_before"
+              test "$(readlink -f "$PREFIX/bin/python")" = "$generic_path_before"
+              test "$(sha256sum "$generic_path_before" | awk "{print \$1}")" = "$generic_sha_before"
+
+              forbidden="$(dpkg -L python3.13 | grep -E "^$PREFIX/(bin/(python|python3|python-config|python3-config|pydoc|pydoc3|pip|pip3)|lib/libpython3.so|lib/pkgconfig/python3(-embed)?\\.pc|share/man/man1/python(3)?\\.1\\.gz)$" || true)"
+              test -z "$forbidden"
+              apt-cache policy python3.13 uv wrangler | sed -n "1,160p"
+
+              pkg uninstall -y python3.13 python3.13-ensurepip-wheels
+              test "$(python --version 2>&1)" = "$generic_before"
+              test "$(sha256sum "$generic_path_before" | awk "{print \$1}")" = "$generic_sha_before"
+            '

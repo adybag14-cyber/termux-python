@@ -16,6 +16,43 @@ It produces:
 
 CPython is not itself a Python wheel. The interpreter is distributed as a Termux `.deb`; compiled extension packages such as `psutil` are distributed as wheels.
 
+## Signed APT repository (`pkg install`)
+
+The project also publishes the tested `.deb` outputs through a signed third-party Termux APT repository. The repository is served from the same Oracle VM that runs the native Hermes gateway, while the repository signing key is kept only on that server. The server polls immutable public GitHub Releases, verifies GitHub-published SHA-256 digests and package metadata, and then signs/publishes locally; no server deployment private key is stored in GitHub Actions.
+
+Enable it once from native Termux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/adybag14-cyber/termux-python/main/scripts/setup_apt_repo.sh | bash
+```
+
+The bootstrap verifies the repository key fingerprint before adding the source:
+
+```text
+EAD24A2124EFA7393A78B7B14699F966313F7A6B
+```
+
+After that the packages behave like normal Termux packages:
+
+```bash
+pkg install wrangler
+pkg install uv
+pkg install python3.11
+pkg install python3.12
+pkg install python3.13
+pkg install python3.14
+```
+
+The APT variants of historical CPython are deliberately repackaged as `python3.X`. They remove only generic aliases such as `python`, `python3`, generic `pydoc`, `libpython3.so`, and generic pkg-config/manpage links, so multiple interpreter minors can coexist without replacing Termux's official rolling `python` package. Pip is bootstrapped only under its version-qualified command such as `pip3.13`.
+
+The raw immutable GitHub-release `python_*.deb` assets are retained for the legacy checksum-pinned switch-style installer below; those continue to identify as package `python`. The signed APT repository **never accepts a package named plain `python`**.
+
+Repository endpoint:
+
+```text
+http://144.21.61.111:8000/termux
+```
+
 ## Copy-paste installation
 
 These commands support the standard native Termux prefix on Android aarch64:
@@ -86,9 +123,12 @@ curl -fsSL https://raw.githubusercontent.com/adybag14-cyber/termux-python/main/i
 
 ## Important package behaviour
 
-The Python packages intentionally keep Termux's normal package name, `python`. Installing Python 3.10 after Python 3.14 therefore **switches the active Termux Python**; it does not install both interpreters side by side.
+There are now two intentionally different distribution modes:
 
-This avoids pretending that packages compiled for different Python ABIs can safely share one Termux prefix. After switching versions, reinstall pip packages containing native extensions.
+- The signed APT repository exposes side-by-side `python3.X` packages and is the preferred public `pkg install` interface.
+- The historical GitHub-release installer consumes the original package named `python` and therefore switches the active Termux Python when changing versions. This path is retained for compatibility and immutable-release testing.
+
+Do not install the raw `python_*.deb` release asset manually if you want multiple Python minors to coexist; enable the APT repository and install `python3.X` instead.
 
 The installer:
 

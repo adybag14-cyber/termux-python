@@ -125,12 +125,66 @@ jobs:
               assert not module_patch.exists()
           PY
 
+      - name: Exercise side-by-side Python repackaging
+        run: |
+          set -Eeuo pipefail
+          rm -rf /tmp/python-src /tmp/ensure-src /tmp/versioned-python
+          mkdir -p \
+            /tmp/python-src/DEBIAN \
+            /tmp/python-src/data/data/com.termux/files/usr/bin \
+            /tmp/python-src/data/data/com.termux/files/usr/lib/python3.13/ensurepip/_bundled \
+            /tmp/python-src/data/data/com.termux/files/usr/lib/pkgconfig \
+            /tmp/ensure-src/DEBIAN \
+            /tmp/ensure-src/data/data/com.termux/files/usr/lib/python3.13/ensurepip/_bundled \
+            /tmp/versioned-python
+          cat > /tmp/python-src/DEBIAN/control <<'EOF'
+          Package: python
+          Version: 3.13.15
+          Architecture: aarch64
+          Maintainer: upstream <upstream@example.invalid>
+          Depends: zlib
+          Breaks: python-dev
+          Replaces: python-dev
+          Provides: python3
+          Description: fake Python
+          EOF
+          cat > /tmp/ensure-src/DEBIAN/control <<'EOF'
+          Package: python-ensurepip-wheels
+          Version: 3.13.15
+          Architecture: all
+          Maintainer: upstream <upstream@example.invalid>
+          Depends: python (= 3.13.15)
+          Description: fake ensurepip wheels
+          EOF
+          printf '#!/bin/sh\n' > /tmp/python-src/data/data/com.termux/files/usr/bin/python3.13
+          chmod 0755 /tmp/python-src/data/data/com.termux/files/usr/bin/python3.13
+          ln -s python3.13 /tmp/python-src/data/data/com.termux/files/usr/bin/python
+          ln -s python3.13 /tmp/python-src/data/data/com.termux/files/usr/bin/python3
+          : > /tmp/python-src/data/data/com.termux/files/usr/lib/pkgconfig/python3.pc
+          : > /tmp/ensure-src/data/data/com.termux/files/usr/lib/python3.13/ensurepip/_bundled/pip-test.whl
+          dpkg-deb --build --root-owner-group /tmp/python-src /tmp/python_3.13.15_aarch64.deb
+          dpkg-deb --build --root-owner-group /tmp/ensure-src /tmp/python-ensurepip-wheels_3.13.15_all.deb
+          python3 scripts/repackage_versioned_python.py \
+            --python-deb /tmp/python_3.13.15_aarch64.deb \
+            --ensurepip-deb /tmp/python-ensurepip-wheels_3.13.15_all.deb \
+            --output-dir /tmp/versioned-python
+          py=/tmp/versioned-python/python3.13_3.13.15_aarch64.deb
+          ensure=/tmp/versioned-python/python3.13-ensurepip-wheels_3.13.15_all.deb
+          test "$(dpkg-deb -f "$py" Package)" = python3.13
+          test "$(dpkg-deb -f "$ensure" Package)" = python3.13-ensurepip-wheels
+          dpkg-deb -f "$py" Depends | grep -F 'python3.13-ensurepip-wheels (= 3.13.15)'
+          ! dpkg-deb -c "$py" | awk '{print $6}' | grep -Fx './data/data/com.termux/files/usr/bin/python'
+          dpkg-deb -e "$py" /tmp/versioned-control
+          grep -F -- '--altinstall' /tmp/versioned-control/postinst
+
       - name: Exercise release index generation
         run: |
           rm -rf /tmp/assets /tmp/index
           mkdir -p /tmp/assets /tmp/index
           : > /tmp/assets/python_3.14.6-1_aarch64.deb
+          : > /tmp/assets/python3.14_3.14.6-1_aarch64.deb
           : > /tmp/assets/python-ensurepip-wheels_3.14.6-1_all.deb
+          : > /tmp/assets/python3.14-ensurepip-wheels_3.14.6-1_all.deb
           : > /tmp/assets/uv_0.11.29_aarch64.deb
           : > /tmp/assets/wrangler_4.120.0_aarch64.deb
           : > /tmp/assets/psutil-7.2.2-314-cp36-abi3-android_24_arm64_v8a.whl
@@ -140,7 +194,9 @@ jobs:
             --assets /tmp/assets \
             --output /tmp/index
           grep -q $'python\t3.14' /tmp/index/release-index.tsv
+          grep -q $'python-apt\t3.14' /tmp/index/release-index.tsv
           grep -q $'ensurepip\t3.14' /tmp/index/release-index.tsv
+          grep -q $'ensurepip-apt\t3.14' /tmp/index/release-index.tsv
           grep -q $'psutil\t3.14' /tmp/index/release-index.tsv
           grep -q $'wrangler\t-\t4.120.0' /tmp/index/release-index.tsv
           grep -q 'psutil-7.2.2-314-cp36-abi3-android_24_arm64_v8a.whl' /tmp/index/release-index.tsv
