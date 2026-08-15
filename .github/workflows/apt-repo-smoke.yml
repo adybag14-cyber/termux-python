@@ -50,7 +50,10 @@ jobs:
               pkg install -y uv wrangler
               uv --version
               uvx --version
-              wrangler --version
+              wrangler_cli_version="$(wrangler --version)"
+              wrangler_pkg_version="$(dpkg-query -W -f='${Version}' wrangler)"
+              test "$wrangler_cli_version" = "$wrangler_pkg_version"
+              apt-cache policy wrangler | grep -F "http://144.21.61.111:8000/termux"
 
               test "$(python --version 2>&1)" = "$generic_before"
               test "$(readlink -f "$PREFIX/bin/python")" = "$generic_path_before"
