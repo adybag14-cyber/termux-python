@@ -58,13 +58,32 @@ def allowed(name: str) -> bool:
     return any(pattern.fullmatch(name) for pattern in ALLOWED)
 
 
-def metadata_ok(path: Path) -> bool:
-    package = subprocess.check_output(
-        ["dpkg-deb", "-f", str(path), "Package"], text=True
-    ).strip()
-    arch = subprocess.check_output(
-        ["dpkg-deb", "-f", str(path), "Architecture"], text=True
-    ).strip()
+def parse_deb_filename(name: str) -> tuple[str, str, str]:
+    if not name.endswith(".deb"):
+        raise ValueError(f"Not a Debian package filename: {name}")
+    try:
+        package, version, arch = name[:-4].rsplit("_", 2)
+    except ValueError as exc:
+        raise ValueError(f"Malformed Debian package filename: {name}") from exc
+    if not package or not version or not arch:
+        raise ValueError(f"Malformed Debian package filename: {name}")
+    return package, version, arch
+
+
+def deb_metadata(path: Path) -> tuple[str, str, str]:
+    output = subprocess.check_output(
+        ["dpkg-deb", "-f", str(path), "Package", "Version", "Architecture"],
+        text=True,
+    ).splitlines()
+    if len(output) != 3:
+        raise RuntimeError(f"Could not read package identity from {path}")
+    return output[0].strip(), output[1].strip(), output[2].strip()
+
+
+def metadata_ok(path: Path, expected: tuple[str, str, str]) -> bool:
+    package, version, arch = deb_metadata(path)
+    if (package, version, arch) != expected:
+        return False
     if package == "python":
         return False
     if not (
@@ -75,8 +94,29 @@ def metadata_ok(path: Path) -> bool:
     return arch in {"aarch64", "all"}
 
 
+def version_gt(candidate: str, current: str) -> bool:
+    return subprocess.run(
+        ["dpkg", "--compare-versions", candidate, "gt", current],
+        check=False,
+    ).returncode == 0
+
+
+def current_versions() -> dict[tuple[str, str], str]:
+    versions: dict[tuple[str, str], str] = {}
+    if not CURRENT_POOL.is_dir():
+        return versions
+    for deb in CURRENT_POOL.glob("*.deb"):
+        package, version, arch = deb_metadata(deb)
+        key = (package, arch)
+        previous = versions.get(key)
+        if previous is None or version_gt(version, previous):
+            versions[key] = version
+    return versions
+
+
 def main() -> int:
     INCOMING.mkdir(parents=True, exist_ok=True)
+    live_versions = current_versions()
     changed = False
     for repo, limit in RELEASE_SOURCES.items():
         seen_names: set[str] = set()
@@ -89,6 +129,15 @@ def main() -> int:
                 if name in seen_names or not allowed(name):
                     continue
                 seen_names.add(name)
+                identity = parse_deb_filename(name)
+                package, version, arch = identity
+                live_version = live_versions.get((package, arch))
+                if live_version is not None and not version_gt(version, live_version):
+                    print(
+                        f"  skip {tag}/{name}: version {version} is not newer than "
+                        f"active {package} {live_version}"
+                    )
+                    continue
                 digest = asset.get("digest") or ""
                 expected = digest.split(":", 1)[1] if digest.startswith("sha256:") else None
                 if not expected:
@@ -125,9 +174,12 @@ def main() -> int:
                         raise RuntimeError(
                             f"SHA-256 mismatch for {repo}/{tag}/{name}: {actual} != {expected}"
                         )
-                    if not metadata_ok(temp):
-                        raise RuntimeError(f"Rejected package metadata for {repo}/{tag}/{name}")
+                    if not metadata_ok(temp, identity):
+                        raise RuntimeError(
+                            f"Rejected package metadata/filename mismatch for {repo}/{tag}/{name}"
+                        )
                     os.replace(temp, INCOMING / name)
+                    live_versions[(package, arch)] = version
                     print(f"  staged {tag}/{name} sha256={actual}")
                     changed = True
                 finally:

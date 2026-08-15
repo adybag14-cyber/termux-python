@@ -338,6 +338,25 @@ jobs:
               else:
                   raise AssertionError('unknown upstream include drift must fail closed')
           PY
+      - name: Exercise APT release version filtering
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "server")
+          import sync_release_packages as sync
+
+          assert sync.parse_deb_filename("wrangler_4.123.0_aarch64.deb") == (
+              "wrangler", "4.123.0", "aarch64"
+          )
+          assert sync.parse_deb_filename("hermes-agent_0.20.1+termux2_aarch64.deb") == (
+              "hermes-agent", "0.20.1+termux2", "aarch64"
+          )
+          assert sync.version_gt("4.123.0", "4.121.0")
+          assert sync.version_gt("0.20.1+termux2", "0.20.1+termux1")
+          assert not sync.version_gt("4.121.0", "4.121.0")
+          assert not sync.version_gt("4.120.0", "4.121.0")
+          PY
+
       - name: Parse workflow YAML
         run: |
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f, aliases: true) }'
