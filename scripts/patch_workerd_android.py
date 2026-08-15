@@ -13,6 +13,28 @@ def replace_once(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def append_bazel_string_list_item(path: Path, variable: str, item: str) -> None:
+    """Append one quoted item to a simple top-level Bazel string list.
+
+    Upstream workerd renumbers its V8 patch stack as patches are added/removed,
+    so anchoring our Android additions to a specific upstream patch filename is
+    brittle. Anchor only to the named list itself and preserve upstream order.
+    """
+    text = path.read_text(encoding="utf-8")
+    quoted = f'    "{item}",'
+    if quoted in text:
+        return
+    marker = f"{variable} = [\n"
+    start = text.find(marker)
+    if start < 0:
+        raise RuntimeError(f"Expected Bazel list {variable!r} not found in {path}")
+    start += len(marker)
+    end = text.find("\n]", start)
+    if end < 0:
+        raise RuntimeError(f"Bazel list {variable!r} is not terminated in {path}")
+    path.write_text(text[:end] + "\n" + quoted + text[end:], encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("tree", type=Path)
@@ -195,14 +217,7 @@ selects.config_setting_group(
     )
 
     v8_module = tree / "build" / "deps" / "v8.MODULE.bazel"
-    v8_text = v8_module.read_text(encoding="utf-8")
-    if v8_patch_name not in v8_text:
-        replace_once(
-            v8_module,
-            '    "0039-Properly-depend-on-llvm-libc.patch",\n]',
-            '    "0039-Properly-depend-on-llvm-libc.patch",\n'
-            f'    "{v8_patch_name}",\n]',
-        )
+    append_bazel_string_list_item(v8_module, "PATCHES", v8_patch_name)
 
     v8_atomic_patch_name = "0041-Provide-atomic-ref-on-Android.patch"
     v8_atomic_patch = tree / "patches" / "v8" / v8_atomic_patch_name
@@ -211,13 +226,7 @@ selects.config_setting_group(
         encoding="utf-8",
     )
 
-    v8_text = v8_module.read_text(encoding="utf-8")
-    if v8_atomic_patch_name not in v8_text:
-        replace_once(
-            v8_module,
-            f'    "{v8_patch_name}",\n]',
-            f'    "{v8_patch_name}",\n    "{v8_atomic_patch_name}",\n]',
-        )
+    append_bazel_string_list_item(v8_module, "PATCHES", v8_atomic_patch_name)
 
     # V8's Bazel helpers default generator tools to the target configuration.
     # Its own comment notes cross-compilation must use exec so generators,
@@ -236,13 +245,7 @@ selects.config_setting_group(
         encoding="utf-8",
     )
 
-    v8_text = v8_module.read_text(encoding="utf-8")
-    if v8_exec_patch_name not in v8_text:
-        replace_once(
-            v8_module,
-            f'    "{v8_atomic_patch_name}",\n]',
-            f'    "{v8_atomic_patch_name}",\n    "{v8_exec_patch_name}",\n]',
-        )
+    append_bazel_string_list_item(v8_module, "PATCHES", v8_exec_patch_name)
 
     # workerd builds V8 under C++23, but V8's Bazel defaults append C++20
     # after the repository-wide flags. Once generator dependencies move to the
@@ -262,13 +265,7 @@ selects.config_setting_group(
         encoding="utf-8",
     )
 
-    v8_text = v8_module.read_text(encoding="utf-8")
-    if v8_cxx23_patch_name not in v8_text:
-        replace_once(
-            v8_module,
-            f'    "{v8_exec_patch_name}",\n]',
-            f'    "{v8_exec_patch_name}",\n    "{v8_cxx23_patch_name}",\n]',
-        )
+    append_bazel_string_list_item(v8_module, "PATCHES", v8_cxx23_patch_name)
     # mksnapshot runs on the Linux host in a cross-build, so V8 cannot infer
     # Android from the execution platform. Passing an empty target OS selects
     # the generic embedded writer (including 64 KiB ARM64 alignment), while
@@ -298,13 +295,7 @@ selects.config_setting_group(
         encoding="utf-8",
     )
 
-    v8_text = v8_module.read_text(encoding="utf-8")
-    if v8_android_snapshot_patch_name not in v8_text:
-        replace_once(
-            v8_module,
-            f'    "{v8_cxx23_patch_name}",\n]',
-            f'    "{v8_cxx23_patch_name}",\n    "{v8_android_snapshot_patch_name}",\n]',
-        )
+    append_bazel_string_list_item(v8_module, "PATCHES", v8_android_snapshot_patch_name)
 
     # V8's full-width WASM shuffle reducer relies on a default template
     # argument through an alias template. Clang rejects deduction for alias
@@ -323,13 +314,7 @@ selects.config_setting_group(
         encoding="utf-8",
     )
 
-    v8_text = v8_module.read_text(encoding="utf-8")
-    if v8_shuffle_patch_name not in v8_text:
-        replace_once(
-            v8_module,
-            f'    "{v8_android_snapshot_patch_name}",\n]',
-            f'    "{v8_android_snapshot_patch_name}",\n    "{v8_shuffle_patch_name}",\n]',
-        )
+    append_bazel_string_list_item(v8_module, "PATCHES", v8_shuffle_patch_name)
 
     # V8 declares native_context in CreateObjectLiteral but never consumes it.
     # The cross-built host V8 library treats warnings as errors, so remove the
@@ -347,13 +332,7 @@ selects.config_setting_group(
         encoding="utf-8",
     )
 
-    v8_text = v8_module.read_text(encoding="utf-8")
-    if v8_dead_context_patch_name not in v8_text:
-        replace_once(
-            v8_module,
-            f'    "{v8_shuffle_patch_name}",\n]',
-            f'    "{v8_shuffle_patch_name}",\n    "{v8_dead_context_patch_name}",\n]',
-        )
+    append_bazel_string_list_item(v8_module, "PATCHES", v8_dead_context_patch_name)
 
     # Older iterations of this port moved gen-compile-cache to exec
     # configuration. Restore upstream's target configuration: workerd exposes
@@ -449,7 +428,12 @@ uint64_t le64toh(uint64_t x) { return __builtin_bswap64(x); }
     if rust_cc_common_old in rust_config_text:
         replace_once(rust_config, rust_cc_common_old, rust_cc_common_android)
     elif rust_cc_common_android not in rust_config_text:
-        raise RuntimeError("Could not configure Android Rust cc_common linking")
+        # Newer workerd enables rules_rust's cc_common final-link path directly
+        # in wd_rust_binary. That supersedes the old config_setting entirely.
+        rust_binary_rule = tree / "build" / "wd_rust_binary.bzl"
+        rust_binary_text = rust_binary_rule.read_text(encoding="utf-8")
+        if "experimental_use_cc_common_link = 1," not in rust_binary_text:
+            raise RuntimeError("Could not configure Android Rust cc_common linking")
 
     rust_module = tree / "build" / "deps" / "rust.MODULE.bazel"
     rust_text = rust_module.read_text(encoding="utf-8")

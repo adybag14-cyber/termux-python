@@ -363,7 +363,12 @@ jobs:
           grep -Fx 'build:android --repo_env=CC=/usr/lib/llvm-19/bin/clang' workerd/.bazelrc
           grep -Fx 'build:android --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld' workerd/.bazelrc
           grep -Fx 'build:android --host_linkopt=-latomic' workerd/.bazelrc
-          grep -A4 -F 'name = "rust_cc_common_link"' workerd/build/config/BUILD.bazel             | grep -F 'constraint_values = ["@platforms//os:android"]'
+          if grep -q -F 'name = "rust_cc_common_link"' workerd/build/config/BUILD.bazel; then
+            grep -A4 -F 'name = "rust_cc_common_link"' workerd/build/config/BUILD.bazel \
+              | grep -F 'constraint_values = ["@platforms//os:android"]'
+          else
+            grep -F 'experimental_use_cc_common_link = 1,' workerd/build/wd_rust_binary.bzl
+          fi
 
       - name: Install workerd host LLVM 19 toolchain
         run: |
