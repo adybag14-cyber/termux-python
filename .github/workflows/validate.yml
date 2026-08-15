@@ -341,7 +341,11 @@ jobs:
       - name: Exercise APT release version filtering
         run: |
           python3 - <<'PY'
+          import subprocess
           import sys
+          import tempfile
+          from pathlib import Path
+
           sys.path.insert(0, "server")
           import sync_release_packages as sync
 
@@ -355,6 +359,28 @@ jobs:
           assert sync.version_gt("0.20.1+termux2", "0.20.1+termux1")
           assert not sync.version_gt("4.121.0", "4.121.0")
           assert not sync.version_gt("4.120.0", "4.121.0")
+
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td) / "root"
+              (root / "DEBIAN").mkdir(parents=True)
+              (root / "DEBIAN" / "control").write_text(
+                  "Package: wrangler\n"
+                  "Version: 4.123.0\n"
+                  "Architecture: aarch64\n"
+                  "Maintainer: CI <ci@example.invalid>\n"
+                  "Description: metadata regression fixture\n",
+                  encoding="utf-8",
+              )
+              deb = Path(td) / "wrangler_4.123.0_aarch64.deb"
+              subprocess.run(
+                  ["dpkg-deb", "--build", "--root-owner-group", str(root), str(deb)],
+                  check=True,
+                  stdout=subprocess.DEVNULL,
+              )
+              identity = ("wrangler", "4.123.0", "aarch64")
+              assert sync.deb_metadata(deb) == identity
+              assert sync.metadata_ok(deb, identity)
+              assert not sync.metadata_ok(deb, ("wrangler", "4.124.0", "aarch64"))
           PY
 
       - name: Parse workflow YAML

@@ -71,13 +71,15 @@ def parse_deb_filename(name: str) -> tuple[str, str, str]:
 
 
 def deb_metadata(path: Path) -> tuple[str, str, str]:
-    output = subprocess.check_output(
-        ["dpkg-deb", "-f", str(path), "Package", "Version", "Architecture"],
-        text=True,
-    ).splitlines()
-    if len(output) != 3:
-        raise RuntimeError(f"Could not read package identity from {path}")
-    return output[0].strip(), output[1].strip(), output[2].strip()
+    # dpkg-deb prints ``Field: value`` labels when multiple fields are requested
+    # together, but prints only the value for a single requested field. Query
+    # separately so the result is stable across dpkg versions.
+    def field(name: str) -> str:
+        return subprocess.check_output(
+            ["dpkg-deb", "-f", str(path), name], text=True
+        ).strip()
+
+    return field("Package"), field("Version"), field("Architecture")
 
 
 def metadata_ok(path: Path, expected: tuple[str, str, str]) -> bool:
