@@ -93,7 +93,17 @@ def main() -> int:
                     print(f"  skip {tag}/{name}: GitHub SHA-256 digest missing")
                     continue
                 current = CURRENT_POOL / name
-                if current.is_file() and sha256(current) == expected:
+                if current.is_file():
+                    current_digest = sha256(current)
+                    if current_digest == expected:
+                        continue
+                    # APT identifies upgrades by package Version, not release tag.
+                    # Never replace an already-published package filename/version
+                    # with different bytes; producers must bump the package version.
+                    print(
+                        f"  skip {tag}/{name}: active package already exists with "
+                        f"different digest {current_digest}; bump the package version"
+                    )
                     continue
                 url = asset.get("browser_download_url")
                 if not url:
