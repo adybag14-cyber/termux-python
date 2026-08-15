@@ -11,7 +11,9 @@ import urllib.request
 from pathlib import Path
 
 RELEASE_SOURCES = {
-    "adybag14-cyber/termux-python": 1,
+    # Scan recent releases so targeted immutable hotfix releases can coexist with
+    # the complete weekly bundle without taking over GitHub's Latest pointer.
+    "adybag14-cyber/termux-python": 20,
     # Hermes package releases are deliberately not marked "Latest" because
     # termux-hermes also publishes the canonical dependency wheelhouse there.
     "adybag14-cyber/termux-hermes": 20,
