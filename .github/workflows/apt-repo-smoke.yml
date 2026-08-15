@@ -51,7 +51,7 @@ jobs:
               uv --version
               uvx --version
               wrangler_cli_version="$(wrangler --version)"
-              wrangler_pkg_version="$(dpkg-query -W -f='${Version}' wrangler)"
+              wrangler_pkg_version="$(dpkg-query -W -f=\${Version} wrangler)"
               test "$wrangler_cli_version" = "$wrangler_pkg_version"
               apt-cache policy wrangler | grep -F "http://144.21.61.111:8000/termux"
 
