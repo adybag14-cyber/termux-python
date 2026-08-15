@@ -590,9 +590,13 @@ jobs:
           mapfile -t assets < <(find dist -maxdepth 1 -type f \
             \( -name '*.deb' -o -name '*.whl' -o -name 'release-index.*' -o -name 'SHA256SUMS' \) \
             -print | sort)
-          gh release create "$RELEASE_TAG" "${assets[@]}" \
+          # Immutable releases lock the tag and assets at publication. Build the
+          # complete release as a draft, upload every asset, then publish once.
+          gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Termux aarch64 daily build ${{ steps.release.outputs.date }}" \
             --notes-file release-notes.md \
-            --latest
+            --draft
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
