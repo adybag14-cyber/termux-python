@@ -23,7 +23,7 @@ The project also publishes the tested `.deb` outputs through a signed third-part
 Enable it once from native Termux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adybag14-cyber/termux-python/main/scripts/setup_apt_repo.sh | bash
+curl -fsSL --retry 5 --retry-all-errors https://raw.githubusercontent.com/adybag14-cyber/termux-python/main/scripts/setup_apt_repo.sh | bash
 ```
 
 The bootstrap verifies the repository key fingerprint before adding the source:
