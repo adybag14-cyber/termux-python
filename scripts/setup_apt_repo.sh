@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -Eeuo pipefail
 
-REPO_URL="${ADYBAG_TERMUX_REPO_URL:-http://144.21.61.111:8000/termux}"
+REPO_URL="${ADYBAG_TERMUX_REPO_URL:-http://144.21.61.111/termux}"
 EXPECTED_FINGERPRINT="EAD24A2124EFA7393A78B7B14699F966313F7A6B"
 KEY_URL="https://raw.githubusercontent.com/adybag14-cyber/termux-python/main/apt/repo-signing-key.asc"
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
@@ -23,7 +23,7 @@ fi
 gpg --batch --yes --dearmor --output "$tmp.gpg" "$tmp"
 install -m 0644 "$tmp.gpg" "$KEYRING"
 printf 'deb [signed-by=%s] %s stable main\n' "$KEYRING" "$REPO_URL" > "$SOURCE"
-apt update
+apt -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
 cat <<EOF
 Repository enabled and signature verified.
 Signing fingerprint: $EXPECTED_FINGERPRINT

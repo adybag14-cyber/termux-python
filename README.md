@@ -50,7 +50,7 @@ The raw immutable GitHub-release `python_*.deb` assets are retained for the lega
 Repository endpoint:
 
 ```text
-http://144.21.61.111:8000/termux
+http://144.21.61.111/termux
 ```
 
 ## Copy-paste installation

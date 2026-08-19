@@ -2,7 +2,7 @@
 
 This directory records the non-secret infrastructure currently used by the public native Termux package repository.
 
-The production endpoint is `http://144.21.61.111:8000/termux`. The repository signing fingerprint is:
+The production endpoint is `http://144.21.61.111/termux`. Port `8000` remains available as a compatibility fallback, but new clients use standard HTTP port 80 to avoid carrier/VPN proxy failures on nonstandard ports. The repository signing fingerprint is:
 
 ```text
 EAD24A2124EFA7393A78B7B14699F966313F7A6B
