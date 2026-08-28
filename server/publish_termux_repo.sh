@@ -96,7 +96,11 @@ printf '%s\n' "$FPR" > repo-signing-key.fingerprint
 
 # Sanity checks before exposing a new tree.
 gpgv --keyring /var/lib/termux-repo/repo-signing-key.gpg dists/stable/InRelease >/dev/null
-find . -type f -print0 | sort -z | xargs -0 sha256sum > REPOSITORY-SHA256SUMS
+find . -type f ! -name REPOSITORY-SHA256SUMS -print0 \
+  | sort -z \
+  | xargs -0 sha256sum \
+  > REPOSITORY-SHA256SUMS
+sha256sum -c REPOSITORY-SHA256SUMS >/dev/null
 
 cd "$RELEASES"
 mv "$STAGE" "$FINAL"
