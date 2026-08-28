@@ -35,6 +35,7 @@ EAD24A2124EFA7393A78B7B14699F966313F7A6B
 After that the packages behave like normal Termux packages:
 
 ```bash
+pkg install hermes-agent
 pkg install wrangler
 pkg install uv
 pkg install python3.11

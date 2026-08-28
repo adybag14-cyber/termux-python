@@ -29,6 +29,7 @@ Repository enabled and signature verified.
 Signing fingerprint: $EXPECTED_FINGERPRINT
 
 Examples:
+  pkg install hermes-agent
   pkg install wrangler
   pkg install uv
   pkg install python3.11

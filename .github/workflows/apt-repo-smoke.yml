@@ -19,7 +19,7 @@ jobs:
     env:
       TERMUX_IMAGE: termux/termux-docker@sha256:3aed9c7fbcf9195a9919deaad418da006232864a779fb4f322d68a34887a2e15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify pinned Termux ARM environment
         run: |
           set -Eeuo pipefail
@@ -34,7 +34,12 @@ jobs:
             "$TERMUX_IMAGE" \
             /entrypoint.sh bash -lc '
               set -Eeuo pipefail
+              # Avoid transient generation skew on randomly selected mirrors.
+              # A fresh bootstrap can otherwise see ncurses-ui-libs from the
+              # old generation and ncurses from the new one.
+              printf "%s\n" "deb https://packages.termux.dev/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
               pkg update -y
+              pkg upgrade -y
               bash /workspace/scripts/setup_apt_repo.sh
               ! dpkg-query -W python >/dev/null 2>&1
               pkg install -y python3.13
