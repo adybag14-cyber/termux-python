@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 
@@ -173,30 +174,9 @@ selects.config_setting_group(
     capnp_patch_dir = tree / "patches" / "capnp"
     capnp_patch_dir.mkdir(parents=True, exist_ok=True)
     capnp_patch = capnp_patch_dir / "0001-android-bionic-port.patch"
-    capnp_patch.write_text(
-        "\n".join([
-            "diff --git a/src/kj/filesystem.c++ b/src/kj/filesystem.c++",
-            "--- a/src/kj/filesystem.c++",
-            "+++ b/src/kj/filesystem.c++",
-            "@@ -31 +31 @@",
-            "-#if __linux__",
-            "+#if __linux__ && !defined(__ANDROID__)",
-            "@@ -1839 +1839 @@",
-            "-#if __linux__",
-            "+#if __linux__ && !defined(__ANDROID__)",
-            "diff --git a/src/kj/filesystem.h b/src/kj/filesystem.h",
-            "--- a/src/kj/filesystem.h",
-            "+++ b/src/kj/filesystem.h",
-            "@@ -939 +939 @@",
-            "-#if __linux__",
-            "+#if __linux__ && !defined(__ANDROID__)",
-            "diff --git a/src/kj/BUILD.bazel b/src/kj/BUILD.bazel",
-            "--- a/src/kj/BUILD.bazel",
-            "+++ b/src/kj/BUILD.bazel",
-            "@@ -84,0 +85 @@",
-            "+        \"@platforms//os:android\": [],",
-        ]) + "\n",
-        encoding="utf-8",
+    shutil.copyfile(
+        Path(__file__).resolve().parent.parent / "patches" / "capnp-android.patch",
+        capnp_patch,
     )
 
     deps_module = tree / "build" / "deps" / "gen" / "deps.MODULE.bazel"

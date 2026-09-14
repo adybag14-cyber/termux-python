@@ -18,6 +18,9 @@ jobs:
       - name: Compile Python scripts
         run: python3 -m compileall -q scripts server
 
+      - name: Test Android dependency patches
+        run: python3 -m unittest discover -s tests -v
+
       - name: Check shell syntax
         run: bash -n install.sh scripts/*.sh
 

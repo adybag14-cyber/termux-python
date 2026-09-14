@@ -5,3 +5,5 @@
 *.yaml text eol=lf
 *.json text eol=lf
 *.md text eol=lf
+# Unified diffs use one space for an empty context line.
+*.patch text eol=lf whitespace=-blank-at-eol

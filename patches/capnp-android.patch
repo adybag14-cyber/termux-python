@@ -1,0 +1,31 @@
+diff --git a/src/kj/filesystem.c++ b/src/kj/filesystem.c++
+--- a/src/kj/filesystem.c++
++++ b/src/kj/filesystem.c++
+@@ -31,3 +31,3 @@
+-#if __linux__
++#if __linux__ && !defined(__ANDROID__)
+ #include <sys/mman.h>    // for memfd_create()
+ #endif  // __linux__
+@@ -1837,4 +1837,4 @@
+-#if __linux__
++#if __linux__ && !defined(__ANDROID__)
+ 
+ Own<File> newMemfdFile(uint flags) {
+   return newDiskFile(KJ_SYSCALL_FD(memfd_create("kj-memfd", flags | MFD_CLOEXEC)));
+diff --git a/src/kj/filesystem.h b/src/kj/filesystem.h
+--- a/src/kj/filesystem.h
++++ b/src/kj/filesystem.h
+@@ -939,3 +939,3 @@
+-#if __linux__
++#if __linux__ && !defined(__ANDROID__)
+ 
+ Own<File> newMemfdFile(uint flags = 0);
+diff --git a/src/kj/BUILD.bazel b/src/kj/BUILD.bazel
+--- a/src/kj/BUILD.bazel
++++ b/src/kj/BUILD.bazel
+@@ -79,4 +79,5 @@
+     linkopts = select({
+         "@platforms//os:windows": [],
++        "@platforms//os:android": [],
+         ":use_libdl": [
+             "-lpthread",
