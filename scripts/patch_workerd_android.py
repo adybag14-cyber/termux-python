@@ -25,6 +25,27 @@ def ensure_quoted_project_include(path: Path, header: str) -> None:
         raise RuntimeError(f"Expected include for {header!r} not found in {path}")
     path.write_text(text.replace(angled, quoted, 1), encoding="utf-8")
 
+
+def use_pyodide_patcher_runfiles(path: Path) -> None:
+    """Keep the Pyodide JavaScript build tool in the exec configuration."""
+    text = path.read_text(encoding="utf-8")
+    anchor = '        tool = Label("//src/pyodide/tools:patch_pyodide_asm"),\n'
+    old = anchor + "    )\n"
+    new = anchor + (
+        "        # Avoid a target-configured runfiles filegroup: Node runs on the\n"
+        "        # build host, while the generated Pyodide file targets Android.\n"
+        "        use_execroot_entry_point = False,\n"
+        "    )\n"
+    )
+    if text.count(anchor) != 1:
+        raise RuntimeError(f"Expected one Pyodide patch tool in {path}")
+    if new in text:
+        return
+    if old not in text:
+        raise RuntimeError(f"Expected Pyodide js_run_binary patch anchor not found in {path}")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
 def append_bazel_string_list_item(path: Path, variable: str, item: str) -> None:
     """Append one quoted item to a simple top-level Bazel string list.
 
@@ -52,6 +73,12 @@ def main() -> int:
     parser.add_argument("tree", type=Path)
     args = parser.parse_args()
     tree = args.tree.resolve()
+
+    # rules_js hoists a js_binary's execroot data into a target-configured
+    # filegroup by default. That makes this host-only tool require an Android
+    # Node runtime, which rules_nodejs does not provide. Run from the tool's
+    # runfiles instead, retaining run_binary's existing exec transition.
+    use_pyodide_patcher_runfiles(tree / "src" / "pyodide" / "helpers.bzl")
 
     module = tree / "MODULE.bazel"
     module_text = module.read_text(encoding="utf-8")
