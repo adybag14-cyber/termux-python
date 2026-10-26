@@ -207,11 +207,12 @@ jobs:
         id: versions
         run: |
           set -Eeuo pipefail
-          wrangler=$(curl -fsSL --retry 4 --retry-all-errors \
-            https://registry.npmjs.org/wrangler/latest | jq -r .version)
-          test -n "$wrangler" -a "$wrangler" != null
+          python3 scripts/resolve_wrangler_source.py --write dist/wrangler/wrangler-source.json
+          wrangler=$(jq -er .version dist/wrangler/wrangler-source.json)
+          source_tag=$(jq -er .source_tag dist/wrangler/wrangler-source.json)
+          source_commit=$(jq -er .source_commit dist/wrangler/wrangler-source.json)
           for attempt in 1 2 3 4 5; do
-            if git clone --filter=blob:none --depth=1 --branch "wrangler@$wrangler" \
+            if git clone --filter=blob:none --depth=1 --branch "$source_tag" \
               https://github.com/cloudflare/workers-sdk.git workers-sdk; then
               break
             fi
@@ -222,6 +223,8 @@ jobs:
             fi
             sleep 10
           done
+          test "$(git -C workers-sdk rev-parse HEAD)" = "$source_commit"
+          test "$(jq -er .version workers-sdk/packages/wrangler/package.json)" = "$wrangler"
           workerd=$(sed -n 's/^  workerd: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
           esbuild=$(sed -n 's/^  esbuild: "\([^"]*\)"/\1/p' workers-sdk/pnpm-workspace.yaml | head -n1)
           node_version=$(jq -r '.volta.node' workers-sdk/package.json)

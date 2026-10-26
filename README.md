@@ -116,6 +116,8 @@ curl -fsSL https://raw.githubusercontent.com/adybag14-cyber/termux-python/main/i
 
 The Wrangler package includes the exact `workerd` and `esbuild` versions selected by that Wrangler release, compiled from source for native Android `aarch64`. It preserves Wrangler's upstream command layout: `wrangler`, the `wrangler2` compatibility alias, and the distinct `cf-wrangler` delegate entrypoint. The package deliberately does not ship platform-native npm binaries or Sharp's precompiled WASM fallback; Miniflare's local Images transforms therefore remain unavailable until that backend is built from source for this target, while core Wrangler, esbuild, and workerd functionality are unaffected.
 
+If npm publishes a Wrangler version before its matching Git source tag is available, the build selects the newest published stable version in the same major series with available source. It records the requested version, selected version, and exact source commit in `wrangler-source.json`, and verifies the checkout and package version before building.
+
 After a future stable series is published by this project, the same form works, for example:
 
 ```bash

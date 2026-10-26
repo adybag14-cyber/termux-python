@@ -56,16 +56,29 @@ def prepare_current_build_system(tree: Path, minor: str) -> None:
     """Make the current Termux host-Python helper usable with old recipes."""
     helper = tree / "scripts" / "build" / "setup" / "termux_setup_build_python.sh"
     helper_text = helper.read_text(encoding="utf-8")
-    loop = (
-        'for f in "$TERMUX_SCRIPTDIR"/packages/python/'
-        '0008-fix-ctypes-util-find_library.patch; do\n'
+    # Upstream renumbers this patch when other patches are removed. The selected
+    # historical recipe can use a different number again, so match its basename
+    # rather than copying the current recipe's numeric prefix into the helper.
+    patch_glob = "[0-9][0-9][0-9][0-9]-fix-ctypes-util-find_library.patch"
+    loop_pattern = re.compile(
+        r'^(?P<indent>[\t ]*)for f in "\$TERMUX_SCRIPTDIR"/packages/python/'
+        r'(?:[0-9]{4}-fix-ctypes-util-find_library\.patch|'
+        + re.escape(patch_glob)
+        + r'); do\n(?P<guard>[\t ]*\[\[ -f "\$f" \]\] \|\| continue\n)?',
+        re.M,
     )
-    guarded_loop = loop + '\t\t\t\t[[ -f "$f" ]] || continue\n'
-    if guarded_loop not in helper_text:
-        if loop not in helper_text:
-            raise RuntimeError("Current Termux build-Python helper has an unknown layout")
-        helper_text = helper_text.replace(loop, guarded_loop, 1)
-        helper.write_text(helper_text, encoding="utf-8", newline="\n")
+    matches = list(loop_pattern.finditer(helper_text))
+    if len(matches) != 1:
+        raise RuntimeError("Current Termux build-Python helper has an unknown layout")
+    match = matches[0]
+    indent = match.group("indent")
+    replacement = (
+        f'{indent}for f in "$TERMUX_SCRIPTDIR"/packages/python/{patch_glob}; do\n'
+        f'{indent}\t[[ -f "$f" ]] || continue\n'
+    )
+    updated = helper_text[:match.start()] + replacement + helper_text[match.end():]
+    if updated != helper_text:
+        helper.write_text(updated, encoding="utf-8", newline="\n")
 
     # Python 3.9.25 already contains a guarded <crypt.h> include. The old patch
     # was required by 3.9.7 but now conflicts with the upstream implementation.
