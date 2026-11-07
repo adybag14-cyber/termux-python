@@ -432,6 +432,22 @@ jobs:
             echo qemu-termux-preflight-ok
           '
 
+      - name: Regenerate Android Rust dependency metadata
+        working-directory: workerd
+        timeout-minutes: 15
+        run: |
+          set -Eeuo pipefail
+          # Adding Android to RUST_TARGET_TRIPLES changes crate_universe's
+          # platform graph. Regenerate that metadata using the existing pins.
+          if [[ -f deps/rust/cargo-bazel-lock.json ]]; then
+            "$HOME/.local/bin/bazelisk" fetch \
+              --enable_platform_specific_config=false \
+              --repo_env=CARGO_BAZEL_REPIN=workspace \
+              --repo=@crates_vendor
+            git diff --exit-code -- deps/rust/Cargo.lock
+            sha256sum deps/rust/Cargo.lock deps/rust/cargo-bazel-lock.json
+          fi
+
       - name: Build matching workerd from source for Android aarch64
         working-directory: workerd
         run: |
