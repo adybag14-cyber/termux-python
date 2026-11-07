@@ -68,11 +68,50 @@ def append_bazel_string_list_item(path: Path, variable: str, item: str) -> None:
     path.write_text(text[:end] + "\n" + quoted + text[end:], encoding="utf-8")
 
 
+def restore_target_runner(tree: Path) -> None:
+    """Keep target-configured compile-cache tools runnable in native Termux."""
+    config = tree / "build/config/BUILD.bazel"
+    bundle = tree / "build/wd_js_bundle.bzl"
+    config_text = config.read_text(encoding="utf-8")
+    bundle_text = bundle.read_text(encoding="utf-8")
+    setting = '''
+# Cross-built compile-cache tools must run on their target platform.
+string_flag(
+    name = "target_run_under",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+'''
+    attr = '        "_target_run_under": attr.label(default = "//build/config:target_run_under"),\n'
+    command = '        command = ctx.executable._tool.path + " $@",\n'
+    wrapped = (
+        '        command = ctx.attr._target_run_under[BuildSettingInfo].value + " " + '
+        'ctx.executable._tool.path + \' "$@"\',\n'
+    )
+    if 'name = "target_run_under"' in config_text:
+        if (bundle_text.count('default = "//build/config:target_run_under"') != 1
+                or bundle_text.count("ctx.attr._target_run_under[BuildSettingInfo].value") != 1):
+            raise RuntimeError("Unknown existing workerd target runner hook")
+        return
+    anchor = '        "_v8_flags": attr.label(default = "//build/config:compile_cache_v8_flags"),\n'
+    if (bundle_text.count(command) != 1 or bundle_text.count(anchor) != 1
+            or "target_run_under" in bundle_text
+            or '"string_flag"' not in config_text
+            or '"BuildSettingInfo"' not in bundle_text):
+        raise RuntimeError("Unknown workerd compile-cache target runner layout")
+    # Validate both files before writing either; retain native host behavior
+    # when the flag is empty and preserve each tool argument through the shell.
+    config.write_text(config_text + setting, encoding="utf-8", newline="\n")
+    bundle.write_text(bundle_text.replace(command, wrapped).replace(anchor, anchor + attr),
+                      encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("tree", type=Path)
     args = parser.parse_args()
     tree = args.tree.resolve()
+    restore_target_runner(tree)
 
     # rules_js hoists a js_binary's execroot data into a target-configured
     # filegroup by default. That makes this host-only tool require an Android

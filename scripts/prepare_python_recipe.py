@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import difflib
 import hashlib
 import io
 import json
@@ -136,6 +138,57 @@ def replace_version(build_sh: str, version: str) -> str:
     return updated
 
 
+def refresh_mimetypes_patch(tree: Path, source: bytes, version: str) -> None:
+    """Rebase only the Termux MIME path insertion onto the selected CPython."""
+    patches = list((tree / "packages/python").glob("*-fix-hardcoded-paths.patch"))
+    if not patches:
+        return
+    if len(patches) != 1:
+        raise RuntimeError("Ambiguous Python hardcoded-paths patches")
+    patch = patches[0]
+    text = patch.read_text(encoding="utf-8")
+    sections = list(re.finditer(
+        r"^--- a/Lib/mimetypes\.py\n\+\+\+ b/Lib/mimetypes\.py\n.*?(?=^--- |\Z)",
+        text, re.M | re.S,
+    ))
+    if len(sections) != 1:
+        raise RuntimeError("Expected one historical mimetypes patch section")
+    section = sections[0]
+    changes = [line for line in section.group().splitlines()
+               if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
+    if len(changes) != 1 or not re.fullmatch(
+        r'\+\s*"@TERMUX_PREFIX@/etc/mime.types",\s*# Termux', changes[0]
+    ):
+        raise RuntimeError("Unknown historical mimetypes patch changes")
+    with tarfile.open(fileobj=io.BytesIO(source), mode="r:xz") as tar:
+        member = tar.extractfile(f"Python-{version}/Lib/mimetypes.py")
+        if member is None:
+            raise RuntimeError("CPython archive lacks mimetypes.py")
+        original = member.read().decode("utf-8")
+    # Recent security releases put the Unix paths in an else branch. Preserve
+    # that guard and Windows' empty list instead of reverting the upstream fix.
+    candidates = [node.value for node in ast.walk(ast.parse(original))
+                  if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == "knownfiles"
+                          for target in node.targets)
+                  and isinstance(node.value, ast.List) and node.value.elts]
+    if len(candidates) != 1 or "/etc/mime.types" not in ast.literal_eval(candidates[0]):
+        raise RuntimeError("Unknown CPython mimetypes knownfiles layout")
+    knownfiles = candidates[0]
+    lines = original.splitlines(keepends=True)
+    if lines[knownfiles.end_lineno - 1].strip() != "]":
+        raise RuntimeError("Unknown CPython mimetypes list closing line")
+    indent = re.match(r"\s*", lines[knownfiles.elts[0].lineno - 1]).group()
+    updated = lines.copy()
+    updated.insert(knownfiles.end_lineno - 1,
+                   indent + '"@TERMUX_PREFIX@/etc/mime.types",           # Termux\n')
+    replacement = "".join(difflib.unified_diff(
+        lines, updated, fromfile="a/Lib/mimetypes.py", tofile="b/Lib/mimetypes.py",
+    ))
+    patch.write_text(text[:section.start()] + replacement + text[section.end():],
+                     encoding="utf-8", newline="\n")
+
+
 def replace_source_checksum(build_sh: str, checksum: str) -> str:
     # Newer recipes use an array because they also download Debian helper files.
     array_pattern = re.compile(r"(TERMUX_PKG_SHA256=\(\s*\n\s*)([0-9a-fA-F]{64})")
@@ -244,6 +297,7 @@ def main() -> int:
     source = fetch_bytes(source_url)
     checksum = hashlib.sha256(source).hexdigest()
     removed_patches = remove_obsolete_source_patches(args.tree, source, args.version)
+    refresh_mimetypes_patch(args.tree, source, args.version)
     for patch in removed_patches:
         print(f"Removed obsolete source patch already present in CPython {args.version}: {patch}")
 
