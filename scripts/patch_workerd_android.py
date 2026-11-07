@@ -586,6 +586,12 @@ build:release_android --@workerd//src/workerd/util:use_perfetto=False
         "build:android --repo_env=AR=/usr/lib/llvm-19/bin/llvm-ar\n",
         "build:android --host_linkopt=--ld-path=/usr/lib/llvm-19/bin/ld.lld\n",
         "build:android --host_linkopt=-latomic\n",
+        # mksnapshot runs on Linux but emits Android code. --target_os only
+        # selects its assembly writer; the compiled generator must also see
+        # Android's heap/sandbox layout. Otherwise generated builtins decode
+        # external-pointer handles with Linux's shift of 6 instead of 7.
+        "build:android --host_copt=-DV8_HAVE_TARGET_OS\n",
+        "build:android --host_copt=-DV8_TARGET_OS_ANDROID\n",
     )
     bazelrc_text = bazelrc.read_text(encoding="utf-8")
     missing_host_settings = [

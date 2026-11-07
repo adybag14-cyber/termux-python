@@ -200,6 +200,10 @@ jobs:
     name: Wrangler / Android aarch64
     runs-on: ubuntu-24.04
     timeout-minutes: 330
+    outputs:
+      wrangler: ${{ steps.versions.outputs.wrangler }}
+      workerd: ${{ steps.versions.outputs.workerd }}
+      esbuild: ${{ steps.versions.outputs.esbuild }}
     steps:
       - uses: actions/checkout@v7
 
@@ -531,10 +535,48 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  verify-wrangler-native:
+    name: Wrangler / native ARM64 runtime
+    needs: build-wrangler
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    env:
+      TERMUX_IMAGE: termux/termux-docker@sha256:070632a59051dbaf9e3edc7d74cbdbac9d906c8cb65b91ece3af8186c3ea4f99
+      WRANGLER_VERSION: ${{ needs.build-wrangler.outputs.wrangler }}
+      WORKERD_VERSION: ${{ needs.build-wrangler.outputs.workerd }}
+      ESBUILD_VERSION: ${{ needs.build-wrangler.outputs.esbuild }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: wrangler-aarch64
+          path: dist
+      - name: Test the built package on native ARM64 before publication
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = aarch64
+          docker pull "$TERMUX_IMAGE"
+          test "$(docker image inspect --format '{{.Architecture}}' "$TERMUX_IMAGE")" = arm64
+          chmod -R a+rX dist
+          sha256sum "dist/wrangler_${WRANGLER_VERSION}_aarch64.deb"
+          docker run --rm --security-opt seccomp=unconfined \
+            -v "$PWD:/work:ro" "$TERMUX_IMAGE" \
+            /entrypoint.sh bash /work/scripts/test_wrangler_termux.sh \
+            "/work/dist/wrangler_${WRANGLER_VERSION}_aarch64.deb" \
+            "$WRANGLER_VERSION" "$WORKERD_VERSION" "$ESBUILD_VERSION" \
+            2>&1 | tee wrangler-native-smoke.log
+      - uses: actions/upload-artifact@v6
+        if: ${{ always() }}
+        with:
+          name: wrangler-native-smoke
+          path: wrangler-native-smoke.log
+          if-no-files-found: warn
+          retention-days: 14
+
   publish:
     name: Publish immutable weekly release
-    needs: [resolve, build-python, build-uv, build-wrangler]
-    if: ${{ always() && !cancelled() && github.ref == 'refs/heads/main' && !inputs.wrangler_only && needs.resolve.result == 'success' && needs.build-wrangler.result == 'success' }}
+    needs: [resolve, build-python, build-uv, build-wrangler, verify-wrangler-native]
+    if: ${{ always() && !cancelled() && github.ref == 'refs/heads/main' && !inputs.wrangler_only && needs.resolve.result == 'success' && needs.build-wrangler.result == 'success' && needs.verify-wrangler-native.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

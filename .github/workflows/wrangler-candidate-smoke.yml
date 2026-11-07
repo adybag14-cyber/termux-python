@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       artifact_id:
-        description: "Wrangler diagnostic artifact from a completed main build"
+        description: "Wrangler package artifact from a completed main build"
         required: true
         type: string
       source_sha:
@@ -54,7 +54,7 @@ jobs:
 
           artifact = json.loads(Path("evidence/artifact.json").read_text())
           run = json.loads(Path("evidence/source-run.json").read_text())
-          assert artifact["name"] == "wrangler-aarch64-diagnostics"
+          assert artifact["name"] in {"wrangler-aarch64", "wrangler-aarch64-diagnostics"}
           assert not artifact["expired"]
           assert artifact["digest"] == "sha256:" + os.environ["ARTIFACT_SHA256"]
           assert artifact["workflow_run"]["head_sha"] == os.environ["SOURCE_SHA"]
