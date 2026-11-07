@@ -4,3 +4,4 @@ dist/
 termux-packages/
 resolved-versions.json
 *-metadata.json
+tests/termux-tls/target/

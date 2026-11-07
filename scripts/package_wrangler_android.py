@@ -300,7 +300,7 @@ esbuild source: https://github.com/evanw/esbuild
 Version: {args.wrangler_version}
 Architecture: aarch64
 Maintainer: adybag14-cyber
-Depends: nodejs (>= 22) | nodejs-lts (>= 22), libc++
+Depends: nodejs (>= 22) | nodejs-lts (>= 22), libc++, ca-certificates
 Section: devel
 Priority: optional
 Homepage: https://github.com/cloudflare/workers-sdk

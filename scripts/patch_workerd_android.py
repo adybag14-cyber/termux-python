@@ -106,12 +106,49 @@ string_flag(
                       encoding="utf-8", newline="\n")
 
 
+def use_termux_tls_roots(tree: Path) -> None:
+    path = tree / "src/rust/cxx/kj-hyper/tls.rs"
+    if not path.exists():
+        return  # Older workerd tags do not contain the Rust HTTP transport.
+    text = path.read_text(encoding="utf-8")
+    old = '''        Some(Arc::new(
+            rustls_platform_verifier::Verifier::new_with_extra_roots(
+                trusted.clone(),
+                provider.clone(),
+            )
+            .map_err(config_error)?,
+        ))
+'''
+    new = '''        #[cfg(target_os = "android")]
+        {
+            let bundle = std::env::var_os("SSL_CERT_FILE").unwrap_or_else(|| {
+                "/data/data/com.termux/files/usr/etc/tls/cert.pem".into()
+            });
+            Some(termux_root_verifier(
+                std::path::Path::new(&bundle), &trusted, provider.clone(),
+            ).map_err(config_error)?)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+''' + "".join("    " + line for line in old.splitlines(keepends=True)) + "        }\n"
+    helper = (Path(__file__).resolve().parent.parent / "patches/workerd-termux-tls.rs").read_text(encoding="utf-8")
+    insertion = '#[cfg(target_os = "android")]\n' + helper + "\n"
+    anchor = "/// A client configuration: `keypair` is the client certificate, if any.\n"
+    if new in text and insertion + anchor in text:
+        return
+    if text.count(old) != 1 or text.count(anchor) != 1 or "fn termux_root_verifier(" in text:
+        raise RuntimeError("Unknown workerd TLS platform verifier layout")
+    path.write_text(text.replace(old, new).replace(anchor, insertion + anchor),
+                    encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("tree", type=Path)
     args = parser.parse_args()
     tree = args.tree.resolve()
     restore_target_runner(tree)
+    use_termux_tls_roots(tree)
 
     # rules_js hoists a js_binary's execroot data into a target-configured
     # filegroup by default. That makes this host-only tool require an Android

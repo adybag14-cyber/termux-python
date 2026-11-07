@@ -6,7 +6,7 @@ import tarfile
 import tempfile
 import unittest
 
-from scripts.patch_workerd_android import restore_target_runner
+from scripts.patch_workerd_android import restore_target_runner, use_termux_tls_roots
 from scripts.prepare_python_recipe import refresh_mimetypes_patch
 
 
@@ -126,6 +126,45 @@ class TargetRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Unknown workerd"):
                 restore_target_runner(root)
             self.assertEqual(before, (config.read_bytes(), bundle.read_bytes()))
+
+
+class TermuxTlsPatchTests(unittest.TestCase):
+    SOURCE = '''/// A client configuration: `keypair` is the client certificate, if any.
+pub fn client_config() {
+        Some(Arc::new(
+            rustls_platform_verifier::Verifier::new_with_extra_roots(
+                trusted.clone(),
+                provider.clone(),
+            )
+            .map_err(config_error)?,
+        ))
+}
+'''
+
+    def test_preserves_non_android_verifier_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "src/rust/cxx/kj-hyper/tls.rs"
+            path.parent.mkdir(parents=True)
+            path.write_text(self.SOURCE)
+            use_termux_tls_roots(root)
+            before = path.read_bytes()
+            self.assertIn('cfg(not(target_os = "android"))', path.read_text())
+            self.assertEqual(path.read_text().count("Verifier::new_with_extra_roots("), 1)
+            self.assertIn('std::env::var_os("SSL_CERT_FILE")', path.read_text())
+            use_termux_tls_roots(root)
+            self.assertEqual(before, path.read_bytes())
+
+    def test_unknown_tls_layout_is_rejected_without_writing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "src/rust/cxx/kj-hyper/tls.rs"
+            path.parent.mkdir(parents=True)
+            path.write_text(self.SOURCE.replace("trusted.clone()", "changed_roots()"))
+            before = path.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "Unknown workerd TLS"):
+                use_termux_tls_roots(root)
+            self.assertEqual(before, path.read_bytes())
 
 
 if __name__ == "__main__":

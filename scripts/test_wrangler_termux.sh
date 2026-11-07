@@ -16,6 +16,7 @@ export CI=1
 export WRANGLER_SEND_METRICS=false
 apt-get update
 apt-get install -y --allow-downgrades --no-install-recommends curl "$deb"
+test -s "$PREFIX/etc/tls/cert.pem"
 
 [[ -x "$PREFIX/bin/node" ]] || { echo "Termux Node executable missing: $PREFIX/bin/node" >&2; exit 1; }
 node_platform=$("$PREFIX/bin/node" -p 'process.platform + ":" + process.arch')

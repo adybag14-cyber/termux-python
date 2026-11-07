@@ -21,6 +21,9 @@ jobs:
       - name: Test Android dependency patches
         run: python3 -m unittest discover -s tests -v
 
+      - name: Verify Termux TLS trust and rejection cases
+        run: cargo test --locked --manifest-path tests/termux-tls/Cargo.toml
+
       - name: Check shell syntax
         run: bash -n install.sh scripts/*.sh
 
