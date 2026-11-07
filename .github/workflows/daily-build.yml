@@ -486,6 +486,7 @@ jobs:
           df -h .
 
       - name: Assemble Wrangler Termux package
+        id: package
         env:
           WRANGLER_VERSION: ${{ steps.versions.outputs.wrangler }}
           WORKERD_VERSION: ${{ steps.versions.outputs.workerd }}
@@ -504,6 +505,7 @@ jobs:
           dpkg-deb -f "dist/wrangler_${WRANGLER_VERSION}_aarch64.deb" Package Version Architecture Depends
 
       - name: Test Wrangler and a real local Worker in aarch64 Termux
+        id: smoke
         env:
           WRANGLER_VERSION: ${{ steps.versions.outputs.wrangler }}
         run: |
@@ -520,8 +522,10 @@ jobs:
             "${{ steps.versions.outputs.esbuild }}"
 
       - uses: actions/upload-artifact@v6
+        # Keep a built candidate for diagnosis without relaxing the publish gate.
+        if: ${{ always() && !cancelled() && steps.package.outcome == 'success' }}
         with:
-          name: wrangler-aarch64
+          name: ${{ steps.smoke.outcome == 'success' && 'wrangler-aarch64' || 'wrangler-aarch64-diagnostics' }}
           path: dist/wrangler_*_aarch64.deb
           if-no-files-found: error
           retention-days: 14
