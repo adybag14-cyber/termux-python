@@ -105,6 +105,7 @@ jobs:
           docker image inspect "$TERMUX_IMAGE" > evidence/container-image.json
 
       - name: Run unchanged package smoke on native ARM64
+        id: smoke
         run: |
           set -Eeuo pipefail
           chmod -R a+rX candidate
@@ -117,11 +118,67 @@ jobs:
             "$WRANGLER_VERSION" "$WORKERD_VERSION" "$ESBUILD_VERSION" \
             2>&1 | tee evidence/native-smoke.log
 
+      - name: Capture native workerd backtrace after a runtime failure
+        if: ${{ failure() && steps.smoke.outcome == 'failure' }}
+        run: |
+          set -Eeuo pipefail
+          # Keep the exact installed package and libraries from the failed smoke.
+          docker commit wrangler-smoke "wrangler-debug:$GITHUB_RUN_ID" >/dev/null
+          docker run --name wrangler-debug --cap-add SYS_PTRACE \
+            --security-opt seccomp=unconfined -i \
+            "wrangler-debug:$GITHUB_RUN_ID" /entrypoint.sh bash -s \
+            <<'SH' 2>&1 | tee evidence/native-backtrace.log
+          set -Eeuo pipefail
+          apt-get install -y --no-install-recommends gdb
+          mkdir -p "$HOME/workerd-debug"
+          cd "$HOME/workerd-debug"
+          cat > worker.js <<'JS'
+          export default { fetch() { return new Response("native-debug-ok"); } };
+          JS
+          cat > config.capnp <<'CAPNP'
+          using Workerd = import "/workerd/workerd.capnp";
+          const config :Workerd.Config = (
+            services = [(name = "main", worker = (
+              modules = [(name = "worker", esModule = embed "worker.js")],
+              compatibilityDate = "2026-08-01",
+            ))],
+            sockets = [(name = "http", address = "127.0.0.1:9899", http = (), service = "main")],
+          );
+          CAPNP
+          binary="$PREFIX/lib/wrangler/native/workerd"
+          sha256sum "$binary"
+          # A first request also catches failures that occur after socket setup.
+          (
+            for _ in $(seq 1 60); do
+              curl -fsS --max-time 1 http://127.0.0.1:9899/ || true
+              sleep 1
+            done
+          ) > requests.log 2>&1 &
+          requester=$!
+          trap 'kill "$requester" 2>/dev/null || true; wait "$requester" 2>/dev/null || true' EXIT
+          set +e
+          timeout --signal=TERM --kill-after=5s 90s \
+            gdb -q -nx -batch \
+              -ex 'set pagination off' -ex 'set confirm off' \
+              -ex 'set disable-randomization off' \
+              -ex 'handle SIGPIPE nostop noprint pass' \
+              -ex run -ex 'thread apply all bt 30' \
+              -ex 'info registers' -ex 'x/12i $pc-16' \
+              -ex 'info sharedlibrary' -ex 'info proc mappings' \
+              --args "$binary" serve config.capnp
+          status=$?
+          set -e
+          printf 'Native debugger exit status: %s\n' "$status"
+          cat requests.log
+          SH
+
       - name: Retain runtime diagnostics
         if: ${{ always() }}
         run: |
           docker cp wrangler-smoke:/data/data/com.termux/files/home/wrangler-termux-smoke evidence/smoke || true
+          docker cp wrangler-debug:/data/data/com.termux/files/home/workerd-debug evidence/debug || true
           docker rm -f wrangler-smoke || true
+          docker rm -f wrangler-debug || true
 
       - uses: actions/upload-artifact@v6
         if: ${{ always() }}
