@@ -451,6 +451,20 @@ selects.config_setting_group(
 
     append_bazel_string_list_item(v8_module, "PATCHES", v8_dead_context_patch_name)
 
+    # Workerd's read-only heap checksum helper is only called in DEBUG builds.
+    # Keep the release tool build under -Werror without changing debug checks.
+    checksum_patches = (tree / "patches" / "v8").glob(
+        "*-Leave-the-SharedFunctionInfo-id-out-of-the-read-only-heap-checksum.patch"
+    )
+    checksum_definition = "+uint32_t ReadOnlyHeapImageChecksum("
+    for checksum_patch in checksum_patches:
+        if checksum_definition in checksum_patch.read_text(encoding="utf-8"):
+            replace_once(
+                checksum_patch,
+                checksum_definition,
+                "+[[maybe_unused]] uint32_t ReadOnlyHeapImageChecksum(",
+            )
+
     # Older iterations of this port moved gen-compile-cache to exec
     # configuration. Restore upstream's target configuration: workerd exposes
     # target_run_under specifically so cross-built tools can execute without
