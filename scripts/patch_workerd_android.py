@@ -26,10 +26,29 @@ def ensure_quoted_project_include(path: Path, header: str) -> None:
     path.write_text(text.replace(angled, quoted), encoding="utf-8")
 
 
-def use_pyodide_patcher_runfiles(path: Path) -> None:
+def use_pyodide_patcher_runfiles(tree: Path) -> None:
     """Keep the Pyodide JavaScript build tool in the exec configuration."""
-    text = path.read_text(encoding="utf-8")
-    anchor = '        tool = Label("//src/pyodide/tools:patch_pyodide_asm"),\n'
+    pyodide = tree / "src" / "pyodide"
+    candidates = (
+        (pyodide / "helpers.bzl", "//src/pyodide/tools:patch_pyodide_asm"),
+        (pyodide / "bundle" / "python_bundles.bzl", ":patch_pyodide_asm"),
+    )
+    patch_tool = None
+    for path, label in candidates:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        anchor = f'        tool = Label("{label}"),\n'
+        count = text.count(anchor)
+        if count == 0:
+            continue
+        if count != 1 or patch_tool is not None:
+            raise RuntimeError(f"Ambiguous Pyodide patch tool under {pyodide}")
+        patch_tool = (path, text, anchor)
+
+    if patch_tool is None:
+        raise RuntimeError(f"Expected one Pyodide patch tool under {pyodide}")
+    path, text, anchor = patch_tool
     old = anchor + "    )\n"
     new = anchor + (
         "        # Avoid a target-configured runfiles filegroup: Node runs on the\n"
@@ -37,8 +56,6 @@ def use_pyodide_patcher_runfiles(path: Path) -> None:
         "        use_execroot_entry_point = False,\n"
         "    )\n"
     )
-    if text.count(anchor) != 1:
-        raise RuntimeError(f"Expected one Pyodide patch tool in {path}")
     if new in text:
         return
     if old not in text:
@@ -154,7 +171,7 @@ def main() -> int:
     # filegroup by default. That makes this host-only tool require an Android
     # Node runtime, which rules_nodejs does not provide. Run from the tool's
     # runfiles instead, retaining run_binary's existing exec transition.
-    use_pyodide_patcher_runfiles(tree / "src" / "pyodide" / "helpers.bzl")
+    use_pyodide_patcher_runfiles(tree)
 
     module = tree / "MODULE.bazel"
     module_text = module.read_text(encoding="utf-8")
