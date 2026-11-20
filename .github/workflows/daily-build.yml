@@ -23,6 +23,9 @@ concurrency:
   group: termux-python-weekly-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  TERMUX_BUILDER_IMAGE_NAME: ghcr.io/termux/package-builder:latest
+
 jobs:
   resolve:
     name: Resolve stable Python releases
@@ -81,6 +84,9 @@ jobs:
             --recipe-ref "${{ matrix.recipe_ref }}" \
             --metadata "python-${{ matrix.minor }}-metadata.json"
 
+      - name: Pull Termux builder image
+        run: bash scripts/pull_docker_image.sh "$TERMUX_BUILDER_IMAGE_NAME"
+
       - name: Cross-compile native Termux package
         working-directory: termux-packages
         env:
@@ -132,12 +138,13 @@ jobs:
             "${{ matrix.minor }}"
 
       - name: Record checksums
-        if: always()
+        id: checksums
+        if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
         run: |
           (cd dist && sha256sum * | sort -k2 > "SHA256SUMS-${{ matrix.minor }}.build")
 
       - uses: actions/upload-artifact@v6
-        if: always()
+        if: ${{ !cancelled() && steps.checksums.outcome == 'success' }}
         with:
           name: python-${{ matrix.minor }}
           path: dist/
@@ -159,6 +166,9 @@ jobs:
 
       - name: Clone Termux packages
         run: git clone --depth=1 https://github.com/termux/termux-packages.git termux-packages
+
+      - name: Pull Termux builder image
+        run: bash scripts/pull_docker_image.sh "$TERMUX_BUILDER_IMAGE_NAME"
 
       - name: Cross-compile uv
         working-directory: termux-packages

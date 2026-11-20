@@ -98,9 +98,19 @@ wrangler deploy --dry-run --outdir "$smoke/dry-run"
 # `cf-wrangler` is a distinct upstream delegate rather than an alias. Exercise
 # its real build path too, not just the feature-detection/usage branch above.
 cf-wrangler build
-test -f "$smoke/.cloudflare/output/v0/config.json"
-test -f "$smoke/.cloudflare/output/v0/workers/default/worker.config.json"
-test -f "$smoke/.cloudflare/output/v0/workers/default/bundle/index.js"
+output="$smoke/.cloudflare/output"
+# Wrangler 4.164.0 emits v1. Older retained packages can still emit v0.
+if [[ -d "$output/v1" ]]; then
+  output="$output/v1"
+else
+  output="$output/v0"
+fi
+for file in config.json workers/default/worker.config.json workers/default/bundle/index.js; do
+  if [[ ! -s "$output/$file" ]]; then
+    echo "cf-wrangler build output is missing or empty: $output/$file" >&2
+    exit 1
+  fi
+done
 
 dev_log="$smoke/wrangler-dev.log"
 wrangler dev --ip 127.0.0.1 --port 8791 >"$dev_log" 2>&1 &

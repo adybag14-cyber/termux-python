@@ -30,7 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.source_sha }}
+          # Use the workflow's test while independently verifying the package's source SHA.
+          ref: ${{ github.workflow_sha }}
 
       - name: Verify candidate provenance and download exact bytes
         env:

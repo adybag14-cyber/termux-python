@@ -38,6 +38,7 @@ jobs:
               # A fresh bootstrap can otherwise see ncurses-ui-libs from the
               # old generation and ncurses from the new one.
               printf "%s\n" "deb https://packages.termux.dev/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
+              export TERMUX_PKG_NO_MIRROR_SELECT=1
               # apt upgrades can replace sources.list. Keep our selected mirror
               # without an interactive dpkg conffile prompt in the container.
               export DEBIAN_FRONTEND=noninteractive
